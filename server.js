@@ -393,9 +393,11 @@ app.post("/orders/:id/cancel",requireAuth,(req,res)=>{
 });
 
 
-app.get("/admin",requireAuth,requireAdmin,(req,res)=>{
- const customers=db.prepare("SELECT id,name,email,active,wc_customer_id FROM users WHERE role='customer' ORDER BY name").all();
- const rows=customers.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.email)+'</td><td>'+(c.wc_customer_id?'#'+esc(c.wc_customer_id):'Niet gekoppeld')+'</td><td>'+(c.active?'Actief':'Uitgeschakeld')+'</td><td><a href="/admin/customers/'+c.id+'">Bekijken</a> · <form method="post" action="/admin/customers/'+c.id+'/access" style="display:inline"><button class="secondary">'+(c.active?'Uitschakelen':'Activeren')+'</button></form> <form method="post" action="/admin/customers/'+c.id+'/delete" style="display:inline" onsubmit="return confirm(&quot;Supply Panel-toegang uitschakelen? Het WooCommerce-account op de webshop blijft actief en de klant kan daar gewoon inloggen. Alle bestellingen blijven bewaard.&quot;)"><button class="danger">Supply Panel uitschakelen</button></form></td></tr>').join("");
+app.get("/admin",requireAuth,requireAdmin,(req,res)=>res.redirect("/admin/customers"));
+app.get("/admin/customers",requireAuth,requireAdmin,(req,res)=>{
+ const showDisabled=req.query.show_disabled==="1";
+ const customers=db.prepare("SELECT id,name,email,active,wc_customer_id FROM users WHERE role='customer' AND active=? ORDER BY name").all(showDisabled?0:1);
+ const rows=customers.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.email)+'</td><td>'+(c.wc_customer_id?'#'+esc(c.wc_customer_id):'Niet gekoppeld')+'</td><td>'+(c.active?'Actief':'Uitgeschakeld')+'</td><td><a href="/admin/customers/'+c.id+'">Bekijken</a> · <form method="post" action="/admin/customers/'+c.id+'/access" style="display:inline"><button class="secondary">'+(c.active?'Supply Panel uitschakelen':'Supply Panel activeren')+'</button></form></td></tr>').join("");
  res.send(page(req,"Klanten", (req.query.customer_deleted?'<div class="success">Supply Panel-toegang is uitgeschakeld. De klant is uit deze actieve klantenlijst verwijderd. Het WooCommerce-account blijft actief en bestellingen blijven bewaard.</div>':'')+'<div class="page-title"><div class="eyebrow">BEHEER</div><h1>Klanten</h1><p>Hier beheer je uitsluitend de toegang tot Supply Panel. Het WooCommerce-account op de webshop wordt niet uitgeschakeld of verwijderd.</p><div class="row-actions"><a class="primary inline" href="/admin/customers/search">Klant toevoegen →</a><a class="secondary" href="/admin/orders">Orderoverzicht →</a><a class="secondary" href="/admin/customers?show_disabled=1">Uitgeschakelde klanten</a></div></div><div class="panel"><table><thead><tr><th>Naam</th><th>E-mail</th><th>WooCommerce</th><th>Toegang</th><th>Actie</th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">'+(showDisabled?'Geen uitgeschakelde klanten.':'Geen actieve klanten.')+'</td></tr>')+'</tbody></table></div>'));
 });
 
