@@ -193,7 +193,7 @@ const insertAdmin = db.prepare(`INSERT INTO users (name,email,password_hash,role
 insertAdmin.run();
 
 if (process.env.ADMIN_PASSWORD) {
- if (process.env.ADMIN_PASSWORD.length < 12) throw new Error("ADMIN_PASSWORD moet minimaal 12 tekens bevatten.");
+ if (process.env.ADMIN_PASSWORD.length < 6) throw new Error("ADMIN_PASSWORD moet minimaal 6 tekens bevatten.");
  const adminHash = bcrypt.hashSync(process.env.ADMIN_PASSWORD, 12);
  db.prepare("UPDATE users SET password_hash=? WHERE email=? COLLATE NOCASE AND role='admin'").run(adminHash, "info@bendemen.nl");
 }
