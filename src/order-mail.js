@@ -84,7 +84,7 @@ function mailHeaders() {
 async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
   const url = orderUrl(order, isTest);
   const attachments = imageAttachments();
-  if (!isTest) attachments.push({
+  attachments.push({
     filename: `bestelling-${order.number || order.id}.pdf`,
     content: await makePdf(order)
   });
