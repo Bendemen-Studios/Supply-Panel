@@ -6,7 +6,7 @@ const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const path = require("path");
 
-const FROM_ADDRESS = String(process.env.SMTP_USER || process.env.SMTP_FROM || "supplypanel@notifications.bendemen.com").trim();
+const FROM_ADDRESS = String(process.env.SMTP_FROM || process.env.SMTP_USER || "supplypanel@notifications.bendemen.com").trim();
 const REPLY_TO = String(process.env.SMTP_REPLY_TO || "").trim();
 let smtpTransporter = null;
 
@@ -22,10 +22,14 @@ function configured() {
 function transporter() {
   if (!configured()) throw new Error("SMTP configuratie ontbreekt (SMTP_HOST, SMTP_USER, SMTP_PASS of PANEL_PUBLIC_URL).");
   if (smtpTransporter) return smtpTransporter;
+  const port = Number(process.env.SMTP_PORT || 465);
+  const secure = process.env.SMTP_SECURE === undefined
+    ? port === 465
+    : String(process.env.SMTP_SECURE).toLowerCase() === "true";
   smtpTransporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 465),
-    secure: String(process.env.SMTP_SECURE || "true") === "true",
+    port,
+    secure,
     auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     connectionTimeout: 20000,
     greetingTimeout: 20000,
