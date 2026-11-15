@@ -649,11 +649,10 @@ app.post("/admin/subscriptions/:id/email",requireAuth,requireAdmin,async(req,res
  const id=Number(req.params.id),email=String(req.body.email_override||"").trim();
  const sub=db.prepare("SELECT id FROM recurring_orders WHERE id=?").get(id);
  if(!sub)return res.status(404).send("Abonnement niet gevonden.");
- if(email&&!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email))return res.status(400).send("Vul een geldig e-mailadres in of laat het veld leeg.");
+ if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return res.status(400).send("Vul een geldig e-mailadres in of laat het veld leeg.");
  db.prepare("UPDATE recurring_orders SET email_override=? WHERE id=?").run(email||null,id);
  const latestOrder=db.prepare("SELECT id FROM orders WHERE recurring_order_id=? ORDER BY id DESC LIMIT 1").get(id);
  if(!latestOrder)return res.redirect("/admin/subscriptions/"+id+"/products?email_updated=1");
- // Gebruik de ontvanger opnieuw uit de database na het opslaan van de override.
  const order=loadMailOrder(latestOrder.id);
  if(!order||!order.email)return res.redirect("/admin/subscriptions/"+id+"/products?email_resend_failed=1");
  console.log("Subscription override mail: subscription="+id+", order="+latestOrder.id+", recipient="+order.email);
