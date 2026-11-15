@@ -29,7 +29,7 @@ const bcrypt = require("bcryptjs");
 const db = require("./src/db");
 const { requireAuth, requireAdmin } = require("./src/auth");
 const woo = require("./src/woocommerce");
-const { sendAutomatedOrderEmail, sendScheduledOrderReminder } = require("./src/order-mail");
+const { sendAutomatedOrderEmail, sendScheduledOrderReminder, verifySmtpConnection } = require("./src/order-mail");
 const { addBillingPeriod } = require("./src/billing-period");
 const { shiftDate, reminderSchedule } = require("./src/order-reminders");
 
@@ -468,11 +468,24 @@ app.get("/admin/mail",requireAuth,requireAdmin,(req,res)=>{
   const orderLabel=log.order_id?"SUPPLY-"+(db.prepare("SELECT COALESCE(local_order_no,id) n FROM orders WHERE id=?").get(log.order_id)?.n||log.order_id):(log.is_test?"Testmail":"—");
   return '<tr><td>'+esc(log.created_at)+'</td><td>'+esc(mailTypeLabel(log.email_type))+(log.is_test?' <span class="mail-tag">TEST</span>':'')+'</td><td>'+esc(log.recipient)+'</td><td>'+esc(orderLabel)+'</td><td><span class="mail-status mail-'+esc(log.status)+'">'+esc(status)+'</span></td><td>'+esc(log.sent_at||'—')+'</td><td>'+(log.error?'<span class="mail-error" title="'+esc(log.error)+'">'+esc(log.error)+'</span>':'—')+'</td><td><form method="post" action="/admin/mail/'+log.id+'/resend" onsubmit="return confirm(\'Deze e-mail opnieuw versturen naar '+esc(log.recipient)+'?\')"><button class="secondary">Opnieuw versturen</button></form></td></tr>';
  }).join("");
+ const verifyNotice=req.query.smtp_ok?'<div class="success">SMTP-verbinding en authenticatie zijn gelukt. Dit controleert de verbinding, niet de aflevering in de inbox.</div>':req.query.smtp_error?'<div class="alert">SMTP-controle mislukt: '+esc(req.query.smtp_error)+'</div>':"";
  const notice=(req.query.sent||req.query.resent)?'<div class="success">De SMTP-server heeft de e-mail geaccepteerd. Dit bevestigt niet dat de e-mail in de inbox is afgeleverd.</div>':req.query.failed?'<div class="alert">Verzending mislukt. Bekijk de foutmelding in het logboek.</div>':"";
  const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Mail logs</h1><p>Controleer of de SMTP-server berichten accepteert, test alle templates en verstuur een eerder bericht opnieuw. Een status SMTP geaccepteerd is geen afleverbevestiging voor de inbox.</p></div>'+notice+
+ verifyNotice+'<div class="panel"><h2>SMTP-verbinding controleren</h2><p>Controleert of de server bereikbaar is en of de SMTP-inloggegevens worden geaccepteerd. Er wordt geen e-mail verstuurd.</p><form method="post" action="/admin/mail/verify"><button class="secondary">SMTP-verbinding testen</button></form></div>'+
  '<div class="panel"><h2>Testmail versturen</h2><p>De test wordt naar het ingevulde adres gestuurd en gebruikt voorbeeldgegevens. Er wordt geen echte bestelling aangemaakt.</p><form method="post" action="/admin/mail/test" class="stack"><label>Type e-mail<select name="email_type" required><option value="new_order">Nieuwe bestelling (voorbeeldmail)</option><option value="reminder_7">Herinnering 7 dagen</option><option value="reminder_3">Herinnering 3 dagen</option></select></label><label>Ontvanger<input name="to" type="email" value="'+esc(req.session.user.email||"")+'" required></label><button class="primary">Testmail versturen</button></form></div>'+
  '<div class="panel"><div class="section-head"><div><h2>Verzendgeschiedenis</h2><p class="hint">Laatste 250 verzendpogingen. SMTP geaccepteerd betekent dat de uitgaande mailserver het bericht aannam; de uiteindelijke aflevering in de inbox wordt hiermee niet bevestigd. Mislukte pogingen tonen de SMTP-fout.</p></div></div><div class="table-wrap"><table><thead><tr><th>Aangemaakt</th><th>Type</th><th>Ontvanger</th><th>Bestelling</th><th>Status</th><th>Verzonden</th><th>Foutmelding</th><th>Actie</th></tr></thead><tbody>'+(rows||'<tr><td colspan="8">Er zijn nog geen e-mails gelogd.</td></tr>')+'</tbody></table></div></div>';
  res.send(page(req,"Mail logs",body));
+});
+app.post("/admin/mail/verify",requireAuth,requireAdmin,async(req,res)=>{
+ try {
+  const result=await verifySmtpConnection();
+  console.log("SMTP-verbinding gecontroleerd:",JSON.stringify(result));
+  res.redirect("/admin/mail?smtp_ok=1");
+ } catch(error) {
+  const message=String(error.message||error).slice(0,500);
+  console.error("SMTP-verbindingscontrole mislukt:",message);
+  res.redirect("/admin/mail?smtp_error="+encodeURIComponent(message));
+ }
 });
 app.post("/admin/mail/test",requireAuth,requireAdmin,async(req,res)=>{
  const type=String(req.body.email_type||"");
