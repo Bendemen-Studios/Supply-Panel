@@ -90,20 +90,6 @@ function mailHeaders() {
 async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
   const url = orderUrl(order, isTest);
   const attachments = imageAttachments();
-  const pdf = await makePdf(order);
-  if (!pdf || pdf.length < 100 || pdf.subarray(0, 5).toString("ascii") !== "%PDF-") {
-    throw new Error("De PDF-bijlage kon niet correct worden aangemaakt.");
-  }
-  const maxPdfBytes = 8 * 1024 * 1024;
-  if (pdf.length > maxPdfBytes) {
-    throw new Error(`De PDF-bijlage is te groot (${(pdf.length / 1024 / 1024).toFixed(2)} MB; maximaal 8 MB).`);
-  }
-  attachments.push({
-    filename: `bestelling-${order.number || order.id}.pdf`,
-    content: pdf,
-    contentType: "application/pdf",
-    contentDisposition: "attachment"
-  });
   return transporter().sendMail({
     from: sender("Factuur aangemaakt | Bendemen Supply Panel"),
     ...mailHeaders(),
@@ -143,5 +129,6 @@ async function sendScheduledOrderReminder({ to, order, daysBefore, orderDate, is
 module.exports = {
   sendAutomatedOrderEmail,
   sendScheduledOrderReminder,
+  makePdf,
   configured
 };
