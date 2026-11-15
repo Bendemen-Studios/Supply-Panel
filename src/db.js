@@ -176,6 +176,7 @@ addColumn("recurring_orders", "manual_generation_token", "TEXT");
 addColumn("recurring_orders", "email_override", "TEXT");
 addColumn("products", "cost_cents", "INTEGER NOT NULL DEFAULT 0");
 addColumn("users", "wc_customer_id", "TEXT");
+addColumn("mail_logs", "smtp_response", "TEXT");
 db.exec("UPDATE users SET active=0 WHERE role='customer' AND wc_customer_id IS NULL");
 db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wc_customer ON users(wc_customer_id) WHERE wc_customer_id IS NOT NULL");
 addColumn("orders", "workflow_status", "TEXT DEFAULT 'started'");
