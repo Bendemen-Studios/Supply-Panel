@@ -2,6 +2,8 @@
 
 const nodemailer = require("nodemailer");
 const PDFDocument = require("pdfkit");
+const fs = require("fs");
+const path = require("path");
 
 const FROM_ADDRESS = String(process.env.SMTP_FROM || "supplypanel@bendemen.nl").trim();
 const REPLY_TO = String(process.env.SMTP_REPLY_TO || "").trim();
@@ -52,18 +54,24 @@ function orderUrl(order, isTest) {
 }
 
 function emailLayout(content) {
-  // Geen externe afbeeldingen: e-mailclients blokkeren die vaak en de
-  // oude automailheader/footer-bestanden bestaan niet in de publieke app-map.
   return `<!doctype html>
 <html lang="nl">
   <body style="margin:0;padding:24px 12px;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#20242a;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:0 auto;background:#ffffff;border-collapse:collapse;">
-      <tr><td style="padding:26px 30px;background:#20242a;color:#ffffff;font-size:20px;font-weight:700;">Bendemen Studios</td></tr>
+      <tr><td style="padding:0;"><img src="cid:bendemen-mail-header" width="500" alt="Bendemen Studios" style="display:block;width:100%;max-width:500px;height:auto;border:0;margin:0 auto;"></td></tr>
       <tr><td style="padding:28px 30px;line-height:1.6;font-size:15px;">${content}</td></tr>
-      <tr><td style="padding:18px 30px;background:#f4f5f7;color:#626873;font-size:12px;">Bendemen Studios · Automatisch bericht vanuit Supply Panel</td></tr>
+      <tr><td style="padding:0;"><img src="cid:bendemen-mail-footer" width="500" alt="Bendemen Studios" style="display:block;width:100%;max-width:500px;height:auto;border:0;margin:0 auto;"></td></tr>
     </table>
   </body>
 </html>`;
+}
+
+function imageAttachments() {
+  const publicDir = path.join(__dirname, "..", "public");
+  return [
+    { filename: "automailheader.png", path: path.join(publicDir, "automailheader.png"), cid: "bendemen-mail-header" },
+    { filename: "automailfooter.png", path: path.join(publicDir, "automailfooter.png"), cid: "bendemen-mail-footer" }
+  ];
 }
 function sender(displayName) {
   return { name: displayName, address: FROM_ADDRESS };
@@ -75,10 +83,11 @@ function mailHeaders() {
 
 async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
   const url = orderUrl(order, isTest);
-  const attachments = isTest ? [] : [{
+  const attachments = imageAttachments();
+  if (!isTest) attachments.push({
     filename: `bestelling-${order.number || order.id}.pdf`,
     content: await makePdf(order)
-  }];
+  });
   return transporter().sendMail({
     from: sender("Factuur aangemaakt | Bendemen Supply Panel"),
     ...mailHeaders(),
@@ -106,6 +115,7 @@ async function sendScheduledOrderReminder({ to, order, daysBefore, orderDate, is
     to,
     subject: subject + (isTest ? " (test)" : ""),
     text,
+    attachments: imageAttachments(),
     html: emailLayout(`<p>Dit is een herinnering voor je geplande bestelling.</p><p>De bestelling staat gepland op <strong>${date}</strong> (over ${daysBefore} dagen).</p><p><a href="${url}" style="display:inline-block;padding:12px 18px;background:#20242a;color:#ffffff;text-decoration:none;border-radius:4px;">Bekijk je bestelling in het Bendemen Supply Panel</a></p><p>Heb je vragen? Neem dan contact met ons op.</p>`)
   });
 }
