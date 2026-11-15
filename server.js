@@ -360,9 +360,9 @@ app.get("/orders/:id/pay",requireAuth,(req,res)=>{
   const id=Number(req.params.id),order=db.prepare("SELECT o.id,o.payment_url,o.wc_status,o.workflow_status,o.wc_order_id,u.wc_customer_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=? AND o.user_id=?").get(id,req.session.user.id);
   if(!order)return res.status(404).send("Bestelling niet gevonden.");
   if(!order.payment_url||["processing","completed","refunded","cancelled"].includes(order.wc_status)||order.workflow_status==="cancelled")return res.status(409).send("Voor deze bestelling is geen betaling (meer) nodig.");
-  const ssoUrl=String(process.env.WC_SSO_URL||"").trim().replace(/\\/$/,"");
+  const ssoUrl=String(process.env.WC_SSO_URL||"").trim().replace(/\/$/,"");
   const ssoSecret=String(process.env.WC_SSO_SECRET||"");
-  if(ssoUrl&&ssoSecret.length>=32&&order.wc_order_id&&order.wc_customer_id&&/^\\d+$/.test(String(order.wc_customer_id))){
+  if(ssoUrl&&ssoSecret.length>=32&&order.wc_order_id&&order.wc_customer_id&&/^\d+$/.test(String(order.wc_customer_id))){
     const claims={order_id:Number(order.wc_order_id),customer_id:Number(order.wc_customer_id),nonce:crypto.randomBytes(24).toString("hex"),exp:Math.floor(Date.now()/1000)+90};
     const encoded=Buffer.from(JSON.stringify(claims)).toString("base64url");
     const signature=crypto.createHmac("sha256",ssoSecret).update(encoded).digest("hex");
