@@ -244,8 +244,20 @@ async function sendLoggedMail({type,to,orderId=null,daysBefore=null,orderDate=nu
     } else {
       result=await sendScheduledOrderReminder({to:recipient,order,daysBefore:effectiveDays,orderDate:scheduledDate,isTest});
     }
-    db.prepare("UPDATE mail_logs SET status='sent',sent_at=CURRENT_TIMESTAMP,message_id=?,error=NULL WHERE id=?")
-      .run(result&&result.messageId?String(result.messageId).slice(0,500):null,logId);
+    const accepted=Array.isArray(result&&result.accepted)?result.accepted.map(String):[];
+    const rejected=Array.isArray(result&&result.rejected)?result.rejected.map(String):[];
+    const smtpResponse=String(result&&result.response||"Geen SMTP-respons ontvangen").slice(0,1000);
+    const acceptedRecipient=accepted.some(address=>address.toLowerCase()===recipient.toLowerCase());
+    const deliveredToSmtp=acceptedRecipient && !rejected.some(address=>address.toLowerCase()===recipient.toLowerCase());
+    if(!deliveredToSmtp) {
+      const rejection=rejected.length?"Ontvanger geweigerd door SMTP: "+rejected.join(", "):"SMTP heeft geen geaccepteerde ontvanger teruggegeven.";
+      db.prepare("UPDATE mail_logs SET status='failed',smtp_response=?,error=? WHERE id=?").run(smtpResponse,rejection,logId);
+      console.error("SMTP heeft ontvanger niet geaccepteerd ("+type+") naar "+recipient+":",smtpResponse,rejection);
+      return {success:false,logId,error:rejection};
+    }
+    db.prepare("UPDATE mail_logs SET status='sent',sent_at=CURRENT_TIMESTAMP,message_id=?,smtp_response=?,error=NULL WHERE id=?")
+      .run(result&&result.messageId?String(result.messageId).slice(0,500):null,smtpResponse,logId);
+    console.log("SMTP heeft e-mail geaccepteerd:",JSON.stringify({type,recipient,messageId:result&&result.messageId||null,response:smtpResponse,accepted,rejected,envelope:result&&result.envelope||null}));
     return {success:true,logId};
   } catch(error) {
     db.prepare("UPDATE mail_logs SET status='failed',error=? WHERE id=?")
@@ -466,7 +478,7 @@ app.get("/admin/mail",requireAuth,requireAdmin,(req,res)=>{
  const rows=logs.map(log=>{
   const status=log.status==="sent"?"SMTP geaccepteerd":log.status==="failed"?"Mislukt":log.status==="skipped"?"Overgeslagen":"Bezig";
   const orderLabel=log.order_id?"SUPPLY-"+(db.prepare("SELECT COALESCE(local_order_no,id) n FROM orders WHERE id=?").get(log.order_id)?.n||log.order_id):(log.is_test?"Testmail":"—");
-  return '<tr><td>'+esc(log.created_at)+'</td><td>'+esc(mailTypeLabel(log.email_type))+(log.is_test?' <span class="mail-tag">TEST</span>':'')+'</td><td>'+esc(log.recipient)+'</td><td>'+esc(orderLabel)+'</td><td><span class="mail-status mail-'+esc(log.status)+'">'+esc(status)+'</span></td><td>'+esc(log.sent_at||'—')+'</td><td>'+(log.error?'<span class="mail-error" title="'+esc(log.error)+'">'+esc(log.error)+'</span>':'—')+'</td><td><form method="post" action="/admin/mail/'+log.id+'/resend" onsubmit="return confirm(\'Deze e-mail opnieuw versturen naar '+esc(log.recipient)+'?\')"><button class="secondary">Opnieuw versturen</button></form></td></tr>';
+  return '<tr><td>'+esc(log.created_at)+'</td><td>'+esc(mailTypeLabel(log.email_type))+(log.is_test?' <span class="mail-tag">TEST</span>':'')+'</td><td>'+esc(log.recipient)+'</td><td>'+esc(orderLabel)+'</td><td><span class="mail-status mail-'+esc(log.status)+'">'+esc(status)+'</span></td><td>'+esc(log.sent_at||'—')+'</td><td>'+(log.smtp_response?'<span title="'+esc(log.smtp_response)+'">SMTP: '+esc(log.smtp_response)+'</span><br>':'')+(log.error?'<span class="mail-error" title="'+esc(log.error)+'">'+esc(log.error)+'</span>':'—')+'</td><td><form method="post" action="/admin/mail/'+log.id+'/resend" onsubmit="return confirm(\'Deze e-mail opnieuw versturen naar '+esc(log.recipient)+'?\')"><button class="secondary">Opnieuw versturen</button></form></td></tr>';
  }).join("");
  const verifyNotice=req.query.smtp_ok?'<div class="success">SMTP-verbinding en authenticatie zijn gelukt. Dit controleert de verbinding, niet de aflevering in de inbox.</div>':req.query.smtp_error?'<div class="alert">SMTP-controle mislukt: '+esc(req.query.smtp_error)+'</div>':"";
  const notice=(req.query.sent||req.query.resent)?'<div class="success">De SMTP-server heeft de e-mail geaccepteerd. Dit bevestigt niet dat de e-mail in de inbox is afgeleverd.</div>':req.query.failed?'<div class="alert">Verzending mislukt. Bekijk de foutmelding in het logboek.</div>':"";
