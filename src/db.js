@@ -155,6 +155,15 @@ CREATE TABLE IF NOT EXISTS mail_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_mail_logs_created ON mail_logs(created_at DESC,id DESC);
 CREATE INDEX IF NOT EXISTS idx_mail_logs_status ON mail_logs(status);
+CREATE TABLE IF NOT EXISTS email_sso_tokens (
+ nonce_hash TEXT PRIMARY KEY,
+ user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+ expires_at INTEGER NOT NULL,
+ used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_email_sso_expiry ON email_sso_tokens(expires_at);
+
 `);
 
 function addColumn(table, column, definition) {
