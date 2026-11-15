@@ -29,7 +29,7 @@ const bcrypt = require("bcryptjs");
 const db = require("./src/db");
 const { requireAuth, requireAdmin } = require("./src/auth");
 const woo = require("./src/woocommerce");
-const { sendAutomatedOrderEmail, sendScheduledOrderReminder } = require("./src/order-mail");
+const { sendAutomatedOrderEmail, sendScheduledOrderReminder, makePdf } = require("./src/order-mail");
 const { addBillingPeriod } = require("./src/billing-period");
 const { shiftDate, reminderSchedule } = require("./src/order-reminders");
 
@@ -353,7 +353,7 @@ app.get("/orders/:id",requireAuth,async(req,res)=>{
   const canCancel=fresh.workflow_status==="started"&&!["processing","completed","cancelled","refunded"].includes(fresh.wc_status);
   const payBlock=fresh.payment_url&&!["processing","completed","refunded","cancelled"].includes(fresh.wc_status)?`<div class="payment-box"><div><strong>Deze bestelling staat nog open</strong><p>Betaal veilig via de betaalpagina van Bendemen Studios.</p></div><a class="primary" href="/orders/${id}/pay">Nu betalen <span>→</span></a></div>`:(fresh.wc_status?`<p class="hint">WooCommerce-status: ${esc(displayOrderStatus(fresh))}</p>`:'<p class="hint">De WooCommerce-betaallink verschijnt zodra de winkelkoppeling is ingesteld.</p>');
   const cancelBlock=canCancel?`<form method="post" action="/orders/${id}/cancel" class="cancel-box"><div><strong>Bestelling annuleren</strong><p>Dit kan zolang de bestelling nog niet in behandeling is genomen.</p></div><button class="danger">Bestelling annuleren</button></form>`:"";
-  const invoiceBlock=fresh.wc_order_id&&["pending","on-hold","processing","completed","refunded"].includes(fresh.wc_status)?`<p class="invoice-action"><a class="secondary" href="/orders/${id}/invoice" target="_blank" rel="noopener">Factuur downloaden (PDF) →</a></p>`:"";
+  const invoiceBlock=`<p class="invoice-action"><a class="secondary" href="/orders/${id}/pdf">Bestelling downloaden (PDF) →</a>${fresh.wc_order_id&&["pending","on-hold","processing","completed","refunded"].includes(fresh.wc_status)?` <a class="secondary" href="/orders/${id}/invoice" target="_blank" rel="noopener">WooCommerce-factuur downloaden →</a>`:""}</p>`;
   res.send(page(req,"Bestelling",`<a class="back" href="/orders">← Terug naar bestellingen</a><div class="page-title"><div class="eyebrow">BESTELLING SUPPLY-${o.local_order_no||id}${fresh.wc_order_id?` · WC #${fresh.wc_order_id}`:""}</div><h1>Bestelling bekijken</h1><p>Aangemaakt op ${esc(o.created_at)} · <span class="status">${esc(displayOrderStatus(fresh))}</span></p></div>${payBlock}${cancelBlock}${invoiceBlock}${fresh.notes?`<div class="panel"><h2>Notities bij deze bestelling</h2><p style="white-space:pre-wrap">${esc(fresh.notes)}</p></div>`:""}<div class="panel"><div class="table-wrap"><table><thead><tr><th>Product</th><th>Aantal</th><th>Prijs per stuk</th><th>Totaal</th></tr></thead><tbody>${rows}</tbody></table></div><div class="total-line"><span>Ordertotaal</span><strong>${money(o.total_cents)}</strong></div></div>${fresh.allow_reorder!==0?`<form method="post" action="/orders/${id}/reorder" class="reorder-form"><div><strong>Deze bestelling opnieuw bestellen?</strong><p>We maken een nieuwe order aan met dezelfde producten en aantallen.</p><label>Notitie bij herbestelling (optioneel)<textarea name="notes" rows="2" maxlength="2000" placeholder="Bijvoorbeeld: graag dezelfde uitvoering en verpakking"></textarea></label></div><button class="primary">Opnieuw bestellen <span>→</span></button></form>`:`<p class="hint">Dit is een maatwerkbestelling. Opnieuw bestellen is voor deze bestelling uitgeschakeld.</p>`}`));
 });
 app.get("/orders/:id/pay",requireAuth,(req,res)=>{
@@ -361,6 +361,18 @@ app.get("/orders/:id/pay",requireAuth,(req,res)=>{
   if(!order)return res.status(404).send("Bestelling niet gevonden.");
   if(!order.payment_url||["processing","completed","refunded","cancelled"].includes(order.wc_status)||order.workflow_status==="cancelled")return res.status(409).send("Voor deze bestelling is geen betaling (meer) nodig.");
   res.redirect(order.payment_url);
+});
+app.get("/orders/:id/pdf",requireAuth,async(req,res)=>{
+  const id=Number(req.params.id),order=db.prepare("SELECT * FROM orders WHERE id=? AND user_id=?").get(id,req.session.user.id);
+  if(!order)return res.status(404).send("Bestelling niet gevonden.");
+  try{
+    const items=orderItems(id).map(x=>({name:x.product_name,quantity:x.quantity}));
+    const pdf=await makePdf({id,number:"SUPPLY-"+(order.local_order_no||id),total:(Number(order.total_cents||0)/100).toFixed(2),currency:order.currency||"EUR",line_items:items});
+    res.setHeader("Content-Type","application/pdf");
+    res.setHeader("Content-Disposition",`attachment; filename="bestelling-SUPPLY-${order.local_order_no||id}.pdf"`);
+    res.setHeader("Content-Length",pdf.length);
+    res.send(pdf);
+  }catch(err){console.error("PDF bestelling downloaden:",err.message);res.status(500).send("PDF kon niet worden aangemaakt.");}
 });
 app.get("/orders/:id/invoice",requireAuth,async(req,res)=>{
   const id=Number(req.params.id),order=db.prepare("SELECT * FROM orders WHERE id=? AND user_id=?").get(id,req.session.user.id);
