@@ -260,6 +260,22 @@ async function sendOrderCreatedEmail(orderId) {
   return sendLoggedMail({type:"new_order",to:order.email,orderId});
 }
 
+// Externe koppelingen mogen het aanmaken van een lokale bestelling niet blokkeren.
+// WooCommerce, webhooks en e-mail worden na de directe redirect op de achtergrond verwerkt.
+function queueOrderIntegrations(orderId) {
+  setImmediate(async () => {
+    try { await syncWooOrder(orderId); } catch (err) {
+      console.error("WooCommerce achtergrond-sync mislukt voor order "+orderId+":", err.message);
+    }
+    try { await sendOrderWebhook(orderId); } catch (err) {
+      console.error("Order webhook mislukt voor order "+orderId+":", err.message);
+    }
+    try { await sendOrderCreatedEmail(orderId); } catch (err) {
+      console.error("Order e-mail mislukt voor order "+orderId+":", err.message);
+    }
+  });
+}
+
 
 
 
@@ -366,7 +382,7 @@ app.post("/orders/:id/reorder",requireAuth,async(req,res)=>{
   if(!order)return res.status(404).send("Bestelling niet gevonden.");
   const lines=orderItems(id).map(x=>({product_name:x.product_name,quantity:x.quantity,unit_price_cents:x.unit_price_cents}));
   const notes=String(req.body.notes||"").trim().slice(0,2000);
-  try{const newId=createOrder(req.session.user.id,lines,id,notes||"Herbestelling");await syncWooOrder(newId);await sendOrderWebhook(newId);await sendOrderCreatedEmail(newId);res.redirect(`/orders/${newId}`);}catch(err){console.error(err);res.status(500).send("Herbestelling maken is mislukt.");}
+  try{const newId=createOrder(req.session.user.id,lines,id,notes||"Herbestelling");queueOrderIntegrations(newId);res.redirect(`/orders/${newId}`);}catch(err){console.error(err);res.status(500).send("Herbestelling maken is mislukt.");}
 });
 app.post("/orders/:id/cancel",requireAuth,(req,res)=>{
   const id=Number(req.params.id),order=db.prepare("SELECT * FROM orders WHERE id=? AND user_id=?").get(id,req.session.user.id);
@@ -505,7 +521,7 @@ app.post("/admin/customers/:id/reorder",requireAuth,requireAdmin,async(req,res)=
  const lines=ids.flatMap(id=>orderItems(id).map(x=>({product_name:x.product_name,quantity:x.quantity,unit_price_cents:x.unit_price_cents})));
  if(!lines.length)return res.status(400).send("De geselecteerde orders bevatten geen orderregels.");
  const notes=String(req.body.notes||"").trim().slice(0,2000)||"Herbestelling op verzoek van beheer";
- try{const newId=createOrder(customerId,lines,null,notes);await syncWooOrder(newId);await sendOrderWebhook(newId);await sendOrderCreatedEmail(newId);res.redirect("/orders/"+newId);}
+ try{const newId=createOrder(customerId,lines,null,notes);queueOrderIntegrations(newId);res.redirect("/orders/"+newId);}
  catch(err){console.error("Admin customer reorder failed:",err.message);res.status(500).send("Herbestelling maken is mislukt.");}
 });
 
@@ -610,13 +626,9 @@ app.post("/admin/subscriptions/:id/generate",requireAuth,requireAdmin,async(req,
  if(result.error==="not_found")return res.status(404).send("Abonnement niet gevonden.");
  if(result.error==="duplicate")return res.status(409).send("Deze bestelling is al aangemaakt. Er is geen tweede bestelling aangemaakt.");
  if(result.error==="no_items")return res.status(400).send("Koppel eerst minimaal één product aan dit abonnement.");
- try{
-  const orderId=result.orderId;
-  await syncWooOrder(orderId);
-  await sendOrderWebhook(orderId);
-  await sendOrderCreatedEmail(orderId);
-  res.redirect("/admin/subscriptions/"+id+"/products?order_created=1");
- }catch(err){console.error("Manual subscription order sync failed:",err.message);res.status(502).send("Bestelling is lokaal aangemaakt, maar synchronisatie is mislukt: "+esc(err.message));}
+ const orderId=result.orderId;
+ queueOrderIntegrations(orderId);
+ res.redirect("/admin/subscriptions/"+id+"/products?order_created=1");
 });
 app.post("/admin/subscriptions/:id/items/:itemId/price",requireAuth,requireAdmin,(req,res)=>{
  const id=Number(req.params.id),itemId=Number(req.params.itemId),price=moneyInput(req.body.price);
