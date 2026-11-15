@@ -350,7 +350,7 @@ app.get("/orders/:id",requireAuth,async(req,res)=>{
   try{await woo.refreshWooOrder(id);}catch(e){console.error("Woo status refresh:",e.message);}
   const fresh=db.prepare("SELECT * FROM orders WHERE id=?").get(id),items=orderItems(id);
   const rows=items.map(i=>`<tr><td>${esc(i.product_name)}</td><td>${i.quantity}</td><td>${money(i.unit_price_cents)}</td><td>${money(i.quantity*i.unit_price_cents)}</td></tr>`).join("");
-  const canCancel=fresh.workflow_status==="started"&&!["processing","completed","cancelled","refunded"].includes(fresh.wc_status);
+  const canCancel=!fresh.recurring_order_id&&fresh.workflow_status==="started"&&!["processing","completed","cancelled","refunded"].includes(fresh.wc_status);
   const payBlock=fresh.payment_url&&!["processing","completed","refunded","cancelled"].includes(fresh.wc_status)?`<div class="payment-box"><div><strong>Deze bestelling staat nog open</strong><p>Betaal veilig via de betaalpagina van Bendemen Studios.</p></div><a class="primary" href="/orders/${id}/pay">Nu betalen <span>→</span></a></div>`:(fresh.wc_status?`<p class="hint">WooCommerce-status: ${esc(displayOrderStatus(fresh))}</p>`:'<p class="hint">De WooCommerce-betaallink verschijnt zodra de winkelkoppeling is ingesteld.</p>');
   const cancelBlock=canCancel?`<form method="post" action="/orders/${id}/cancel" class="cancel-box"><div><strong>Bestelling annuleren</strong><p>Dit kan zolang de bestelling nog niet in behandeling is genomen.</p></div><button class="danger">Bestelling annuleren</button></form>`:"";
   const invoiceBlock=fresh.wc_order_id&&["pending","on-hold","processing","completed","refunded"].includes(fresh.wc_status)?`<p class="invoice-action"><a class="secondary" href="/orders/${id}/pdf" target="_blank" rel="noopener">Factuur downloaden (PDF) →</a></p>`:"";
@@ -402,6 +402,7 @@ app.post("/orders/:id/reorder",requireAuth,async(req,res)=>{
 app.post("/orders/:id/cancel",requireAuth,(req,res)=>{
   const id=Number(req.params.id),order=db.prepare("SELECT * FROM orders WHERE id=? AND user_id=?").get(id,req.session.user.id);
   if(!order)return res.status(404).send("Bestelling niet gevonden.");
+  if(order.recurring_order_id)return res.status(403).send("Abonnementsbestellingen kunnen niet worden geannuleerd.");
   if(order.workflow_status!=="started"||["processing","completed","cancelled","refunded"].includes(order.wc_status))return res.status(409).send("Deze bestelling kan niet meer worden geannuleerd.");
   db.prepare("UPDATE orders SET workflow_status='cancellation_requested' WHERE id=? AND user_id=?").run(id,req.session.user.id);
   res.redirect(`/orders/${id}`);
