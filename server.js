@@ -579,7 +579,7 @@ app.post("/admin/orders/:id/products",requireAuth,requireAdmin,(req,res)=>{
  res.redirect("/admin/orders/"+id+"/products");
 });
 app.get("/admin/subscriptions",requireAuth,requireAdmin,(req,res)=>{
- const subs=db.prepare("SELECT r.*,u.name customer_name FROM recurring_orders r JOIN users u ON u.id=r.user_id ORDER BY r.id DESC").all();
+ const subs=db.prepare("SELECT r.*,u.name customer_name,u.email customer_email FROM recurring_orders r JOIN users u ON u.id=r.user_id ORDER BY r.id DESC").all();
  const customers=db.prepare("SELECT id,name FROM users WHERE role='customer' AND active=1 ORDER BY name").all();
  const products=db.prepare("SELECT id,wc_product_id,name,price_cents FROM products WHERE active=1 ORDER BY name").all();
  const options=customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join("");
