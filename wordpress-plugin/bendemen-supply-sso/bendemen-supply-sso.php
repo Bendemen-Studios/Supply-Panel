@@ -2,10 +2,138 @@
 /**
  * Plugin Name: Bendemen Supply Panel SSO
  * Description: Beveiligde eenmalige login vanuit Bendemen Supply Panel naar de WooCommerce-betaalpagina.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Bendemen Studios
  */
 if (!defined('ABSPATH')) exit;
+
+define('BENDEMEN_SUPPLY_SSO_OPTION', 'bendemen_supply_sso_secret');
+
+function bendemen_supply_sso_generate_secret() {
+    return bin2hex(random_bytes(32));
+}
+
+function bendemen_supply_sso_get_secret() {
+    if (defined('BENDEMEN_SUPPLY_SSO_SECRET') && BENDEMEN_SUPPLY_SSO_SECRET !== '') {
+        return (string) BENDEMEN_SUPPLY_SSO_SECRET;
+    }
+
+    $secret = (string) get_option(BENDEMEN_SUPPLY_SSO_OPTION, '');
+    if ($secret === '') {
+        $secret = bendemen_supply_sso_generate_secret();
+        add_option(BENDEMEN_SUPPLY_SSO_OPTION, $secret, '', false);
+        $secret = (string) get_option(BENDEMEN_SUPPLY_SSO_OPTION, $secret);
+    }
+    return $secret;
+}
+
+add_action('admin_menu', function () {
+    add_submenu_page(
+        'woocommerce',
+        'Bendemen Supply SSO',
+        'Supply Panel SSO',
+        'manage_woocommerce',
+        'bendemen-supply-sso',
+        'bendemen_supply_sso_render_settings'
+    );
+});
+
+add_action('admin_post_bendemen_supply_sso_regenerate', function () {
+    if (!current_user_can('manage_woocommerce')) {
+        wp_die(esc_html__('Je hebt geen toestemming om SSO-instellingen te beheren.', 'bendemen-supply-sso'), 403);
+    }
+    check_admin_referer('bendemen_supply_sso_regenerate');
+
+    if (defined('BENDEMEN_SUPPLY_SSO_SECRET')) {
+        wp_safe_redirect(add_query_arg(
+            ['page' => 'bendemen-supply-sso', 'secret_managed' => 'constant'],
+            admin_url('admin.php')
+        ));
+        exit;
+    }
+
+    update_option(BENDEMEN_SUPPLY_SSO_OPTION, bendemen_supply_sso_generate_secret(), false);
+    wp_safe_redirect(add_query_arg(
+        ['page' => 'bendemen-supply-sso', 'secret_regenerated' => '1'],
+        admin_url('admin.php')
+    ));
+    exit;
+});
+
+function bendemen_supply_sso_render_settings() {
+    if (!current_user_can('manage_woocommerce')) return;
+
+    $secret = bendemen_supply_sso_get_secret();
+    $constant_managed = defined('BENDEMEN_SUPPLY_SSO_SECRET');
+    ?>
+    <div class="wrap">
+        <h1>Bendemen Supply Panel SSO</h1>
+        <p>Deze geheime sleutel beveiligt de eenmalige login vanuit Supply Panel naar WooCommerce.</p>
+        <?php if (isset($_GET['secret_regenerated'])) : ?>
+            <div class="notice notice-success is-dismissible"><p>Er is een nieuwe SSO-secret aangemaakt. Werk ook <code>WC_SSO_SECRET</code> bij in Supply Panel.</p></div>
+        <?php endif; ?>
+        <?php if (isset($_GET['secret_managed']) && $constant_managed) : ?>
+            <div class="notice notice-warning"><p>De secret wordt beheerd via <code>BENDEMEN_SUPPLY_SSO_SECRET</code> in wp-config.php. Pas die constante aan om de sleutel te wijzigen.</p></div>
+        <?php endif; ?>
+
+        <table class="form-table" role="presentation">
+            <tr>
+                <th scope="row"><label for="bendemen-supply-sso-secret">SSO Secret</label></th>
+                <td>
+                    <input type="password" id="bendemen-supply-sso-secret" class="regular-text"
+                        value="<?php echo esc_attr($secret); ?>" autocomplete="new-password" readonly />
+                    <button type="button" class="button" id="bendemen-supply-sso-toggle">Tonen</button>
+                    <button type="button" class="button" id="bendemen-supply-sso-copy">Kopiëren</button>
+                    <p class="description">Gebruik exact dezelfde secret bij Supply Panel. Deel deze sleutel nooit met klanten.</p>
+                </td>
+            </tr>
+        </table>
+
+        <?php if (!$constant_managed) : ?>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"
+                onsubmit="return confirm('Weet je zeker dat je een nieuwe SSO-secret wilt maken? Supply Panel SSO werkt pas weer nadat je WC_SSO_SECRET daar hebt bijgewerkt.');">
+                <input type="hidden" name="action" value="bendemen_supply_sso_regenerate" />
+                <?php wp_nonce_field('bendemen_supply_sso_regenerate'); ?>
+                <?php submit_button('Nieuwe secret genereren', 'secondary'); ?>
+            </form>
+        <?php endif; ?>
+
+        <hr />
+        <h2>Supply Panel configuratie</h2>
+        <p>Kopieer de secret naar de environment variables van Supply Panel:</p>
+        <p><code>WC_SSO_URL=https://jouw-webshop-domein.nl</code></p>
+        <p><code>WC_SSO_SECRET=jouw_gekopieerde_secret</code></p>
+    </div>
+    <script>
+    (function () {
+        const field = document.getElementById('bendemen-supply-sso-secret');
+        const toggle = document.getElementById('bendemen-supply-sso-toggle');
+        const copy = document.getElementById('bendemen-supply-sso-copy');
+        if (!field || !toggle || !copy) return;
+
+        toggle.addEventListener('click', function () {
+            const visible = field.type === 'text';
+            field.type = visible ? 'password' : 'text';
+            toggle.textContent = visible ? 'Tonen' : 'Verbergen';
+        });
+
+        copy.addEventListener('click', async function () {
+            try {
+                await navigator.clipboard.writeText(field.value);
+                copy.textContent = 'Gekopieerd!';
+            } catch (error) {
+                field.type = 'text';
+                field.focus();
+                field.select();
+                document.execCommand('copy');
+                copy.textContent = 'Gekopieerd!';
+            }
+            window.setTimeout(function () { copy.textContent = 'Kopiëren'; }, 1800);
+        });
+    }());
+    </script>
+    <?php
+}
 
 add_action('rest_api_init', function () {
     register_rest_route('bendemen-sso/v1', '/login', [
@@ -16,7 +144,8 @@ add_action('rest_api_init', function () {
 });
 
 function bendemen_supply_sso_login(WP_REST_Request $request) {
-    if (!defined('BENDEMEN_SUPPLY_SSO_SECRET') || strlen(BENDEMEN_SUPPLY_SSO_SECRET) < 32) {
+    $secret = bendemen_supply_sso_get_secret();
+    if (strlen($secret) < 32) {
         return new WP_Error('sso_not_configured', 'SSO is niet geconfigureerd.', ['status' => 503]);
     }
     if (!function_exists('wc_get_order')) {
@@ -26,7 +155,7 @@ function bendemen_supply_sso_login(WP_REST_Request $request) {
     $parts = explode('.', $token);
     if (count($parts) !== 2) return new WP_Error('invalid_token', 'Ongeldige toegangscode.', ['status' => 401]);
     $payload_json = base64_decode(strtr($parts[0], '-_', '+/'));
-    $expected = hash_hmac('sha256', $parts[0], BENDEMEN_SUPPLY_SSO_SECRET);
+    $expected = hash_hmac('sha256', $parts[0], $secret);
     if (!$payload_json || !hash_equals($expected, $parts[1])) {
         return new WP_Error('invalid_signature', 'Ongeldige toegangscode.', ['status' => 401]);
     }
