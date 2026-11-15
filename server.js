@@ -298,6 +298,40 @@ app.post("/webhooks/woocommerce", (req,res) => {
 app.get("/register",(req,res)=>res.redirect("/login"));
 app.post("/register",(req,res)=>res.status(403).send("Accountregistratie is alleen mogelijk via beheer."));
 
+app.get("/email-login", async (req,res,next) => {
+  try {
+    const token=String(req.query.token||"");
+    const parts=token.split(".");
+    if(parts.length!==2||!process.env.SESSION_SECRET) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
+    const [encoded,signature]=parts;
+    const expected=crypto.createHmac("sha256",process.env.SESSION_SECRET).update(encoded).digest("hex");
+    if(!crypto.timingSafeEqual(Buffer.from(signature),Buffer.from(expected))) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
+    const payload=JSON.parse(Buffer.from(encoded,"base64url").toString("utf8"));
+    const now=Math.floor(Date.now()/1000);
+    if(!payload.user_id||!payload.order_id||!payload.nonce||!payload.exp||payload.exp<now||payload.exp>now+16*60) return res.status(401).send("Deze inloglink is verlopen. Vraag een nieuwe bestellingsmail aan.");
+    const order=db.prepare("SELECT id,user_id FROM orders WHERE id=? AND user_id=?").get(Number(payload.order_id),Number(payload.user_id));
+    const user=db.prepare("SELECT id,name,email,role,active FROM users WHERE id=?").get(Number(payload.user_id));
+    if(!order||!user||Number(user.active)!==1||user.role!=="customer") return res.status(403).send("Deze bestelling of dit account is niet beschikbaar.");
+    const nonceHash=crypto.createHash("sha256").update(String(payload.nonce)).digest("hex");
+    const inserted=db.prepare("INSERT OR IGNORE INTO email_sso_tokens (nonce_hash,user_id,order_id,expires_at) VALUES (?,?,?,?)")
+      .run(nonceHash,user.id,order.id,Number(payload.exp));
+    if(!inserted.changes) return res.status(401).send("Deze inloglink is al gebruikt. Vraag een nieuwe bestellingsmail aan.");
+    const consumed=db.prepare("UPDATE email_sso_tokens SET used_at=? WHERE nonce_hash=? AND used_at IS NULL AND expires_at>=?")
+      .run(Date.now(),nonceHash,now);
+    if(!consumed.changes) return res.status(401).send("Deze inloglink is al gebruikt of verlopen. Vraag een nieuwe bestellingsmail aan.");
+    req.session.regenerate(err=>{
+      if(err) return next(err);
+      req.session.user={id:user.id,name:user.name,email:user.email,role:user.role};
+      req.session.save(saveErr=>{
+        if(saveErr) return next(saveErr);
+        res.redirect(303,"/orders/"+order.id);
+      });
+    });
+  } catch(error) {
+    if(error instanceof SyntaxError) return res.status(401).send("Deze inloglink is ongeldig. Vraag een nieuwe bestellingsmail aan.");
+    next(error);
+  }
+});
 app.get("/login",(req,res)=>{
   if(req.session.user)return res.redirect("/");
   const error=req.query.error?'<div class="alert">Inloggen is niet gelukt. Controleer je e-mailadres en wachtwoord.</div>':"";
