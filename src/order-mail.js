@@ -7,6 +7,7 @@ const path = require("path");
 
 const FROM_ADDRESS = String(process.env.SMTP_FROM || "supplypanel@bendemen.nl").trim();
 const REPLY_TO = String(process.env.SMTP_REPLY_TO || "").trim();
+let smtpTransporter = null;
 
 function configured() {
   return Boolean(
@@ -19,12 +20,17 @@ function configured() {
 
 function transporter() {
   if (!configured()) throw new Error("SMTP configuratie ontbreekt (SMTP_HOST, SMTP_USER, SMTP_PASS of PANEL_PUBLIC_URL).");
-  return nodemailer.createTransport({
+  if (smtpTransporter) return smtpTransporter;
+  smtpTransporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT || 465),
     secure: String(process.env.SMTP_SECURE || "true") === "true",
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    connectionTimeout: 20000,
+    greetingTimeout: 20000,
+    socketTimeout: 30000
   });
+  return smtpTransporter;
 }
 
 function makePdf(order) {
@@ -84,14 +90,26 @@ function mailHeaders() {
 async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
   const url = orderUrl(order, isTest);
   const attachments = imageAttachments();
+  const pdf = await makePdf(order);
+  if (!pdf || pdf.length < 100 || pdf.subarray(0, 5).toString("ascii") !== "%PDF-") {
+    throw new Error("De PDF-bijlage kon niet correct worden aangemaakt.");
+  }
+  const maxPdfBytes = 8 * 1024 * 1024;
+  if (pdf.length > maxPdfBytes) {
+    throw new Error(`De PDF-bijlage is te groot (${(pdf.length / 1024 / 1024).toFixed(2)} MB; maximaal 8 MB).`);
+  }
   attachments.push({
     filename: `bestelling-${order.number || order.id}.pdf`,
-    content: await makePdf(order)
+    content: pdf,
+    contentType: "application/pdf",
+    contentDisposition: "attachment"
   });
   return transporter().sendMail({
     from: sender("Factuur aangemaakt | Bendemen Supply Panel"),
     ...mailHeaders(),
     to,
+    envelope: { from: FROM_ADDRESS, to: [to] },
+    headers: { "X-Mailer": "Bendemen Supply Panel" },
     subject: `Bendemen Studios – bestelling #${order.number || order.id}${isTest ? " (test)" : ""}`,
     text: `Je bestelling staat klaar. Bekijk de bestelling in het Bendemen Supply Panel: ${url}`,
     html: emailLayout(`<p>Je bestelling staat klaar.</p><p><a href="${url}" style="display:inline-block;padding:12px 18px;background:#20242a;color:#ffffff;text-decoration:none;border-radius:4px;">Bekijk bestelling en betaal veilig</a></p>`),
@@ -113,6 +131,8 @@ async function sendScheduledOrderReminder({ to, order, daysBefore, orderDate, is
     from: sender(`${daysBefore} dagen nog om te betalen | Bendemen Supply Panel`),
     ...mailHeaders(),
     to,
+    envelope: { from: FROM_ADDRESS, to: [to] },
+    headers: { "X-Mailer": "Bendemen Supply Panel" },
     subject: subject + (isTest ? " (test)" : ""),
     text,
     attachments: imageAttachments(),
