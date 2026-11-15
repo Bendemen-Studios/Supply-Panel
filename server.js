@@ -613,7 +613,7 @@ app.post("/admin/subscriptions",requireAuth,requireAdmin,(req,res)=>{
  tx();res.redirect("/admin/subscriptions");
 });
 app.get("/admin/subscriptions/:id/products",requireAuth,requireAdmin,(req,res)=>{
- const id=Number(req.params.id),sub=db.prepare("SELECT r.*,u.name customer_name FROM recurring_orders r JOIN users u ON u.id=r.user_id WHERE r.id=?").get(id);if(!sub)return res.status(404).send("Abonnement niet gevonden.");
+ const id=Number(req.params.id),sub=db.prepare("SELECT r.*,u.name customer_name,u.email customer_email FROM recurring_orders r JOIN users u ON u.id=r.user_id WHERE r.id=?").get(id);if(!sub)return res.status(404).send("Abonnement niet gevonden.");
  const generationToken=crypto.randomBytes(32).toString("hex");db.prepare("UPDATE recurring_orders SET manual_generation_token=? WHERE id=?").run(generationToken,id);
  const products=db.prepare("SELECT id,wc_product_id,name,price_cents,source FROM products WHERE active=1 ORDER BY name").all(),options=products.map(p=>'<label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:6px"><input type="checkbox" name="product_ids" value="'+p.id+'" style="width:auto;margin:0"><span>'+esc(p.name)+(p.wc_product_id?' · WooCommerce #'+esc(p.wc_product_id):' · Lokaal')+' — '+money(p.price_cents)+'</span></label>').join("")||'<p>Geen actieve producten gevonden.</p>';
  const lines=db.prepare("SELECT * FROM recurring_order_items WHERE recurring_order_id=?").all(id).map(x=>'<tr><td>'+esc(x.product_name)+'</td><td>'+x.quantity+'</td><td><form method="post" action="/admin/subscriptions/'+id+'/items/'+x.id+'/price" style="display:flex;gap:8px;align-items:center"><input name="price" inputmode="decimal" value="'+(x.unit_price_cents/100).toFixed(2).replace(".",",") +'" aria-label="Prijs per stuk" style="max-width:110px"><button class="secondary">Prijs opslaan</button></form></td></tr>').join("");
@@ -727,8 +727,8 @@ async function processRecurringOrders(){
   // Herstel vastgelopen claims na een onverwachte processtop.
   db.prepare("UPDATE recurring_order_reminders SET status='pending',claimed_at=NULL WHERE status='sending' AND claimed_at<?").run(Date.now()-10*60*1000);
   const reminders=db.prepare(
-   "SELECT r.id,r.order_id,r.scheduled_for,r.days_before,o.user_id,o.status AS order_status,o.total_cents,o.currency,o.wc_order_number,o.wc_order_id,u.email " +
-   "FROM recurring_order_reminders r JOIN orders o ON o.id=r.order_id JOIN users u ON u.id=o.user_id " +
+   "SELECT r.id,r.order_id,r.scheduled_for,r.days_before,o.user_id,o.status AS order_status,o.total_cents,o.currency,o.wc_order_number,o.wc_order_id,COALESCE(NULLIF(ro.email_override,''),u.email) email " +
+   "FROM recurring_order_reminders r JOIN orders o ON o.id=r.order_id JOIN users u ON u.id=o.user_id LEFT JOIN recurring_orders ro ON ro.id=r.recurring_order_id " +
    "WHERE r.status='pending' AND r.scheduled_for<=? ORDER BY r.scheduled_for,r.id"
   ).all(today);
   for(const reminder of reminders){
