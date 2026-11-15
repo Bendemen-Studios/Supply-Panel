@@ -395,8 +395,8 @@ app.post("/orders/:id/cancel",requireAuth,(req,res)=>{
 
 app.get("/admin",requireAuth,requireAdmin,(req,res)=>{
  const customers=db.prepare("SELECT id,name,email,active,wc_customer_id FROM users WHERE role='customer' ORDER BY name").all();
- const rows=customers.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.email)+'</td><td>'+(c.wc_customer_id?'#'+esc(c.wc_customer_id):'Niet gekoppeld')+'</td><td>'+(c.active?'Actief':'Uitgeschakeld')+'</td><td><a href="/admin/customers/'+c.id+'">Bekijken</a> · <form method="post" action="/admin/customers/'+c.id+'/access" style="display:inline"><button class="secondary">'+(c.active?'Uitschakelen':'Activeren')+'</button></form> <form method="post" action="/admin/customers/'+c.id+'/delete" style="display:inline" onsubmit="return confirm(&quot;Klant definitief verwijderen? Alle lokale bestellingen, abonnementen en gekoppelde gegevens van deze klant worden ook verwijderd. De WooCommerce-klant zelf blijft bestaan.&quot;)"><button class="danger">Verwijderen</button></form></td></tr>').join("");
- res.send(page(req,"Beheer", (req.query.customer_deleted?'<div class="success">Klant en lokale gekoppelde gegevens zijn verwijderd.</div>':'')+'<div class="page-title"><div class="eyebrow">BEHEER</div><h1>Klanten</h1><p>Alleen WooCommerce-klanten die je hier toevoegt krijgen toegang.</p><div class="row-actions"><a class="primary inline" href="/admin/customers/search">Klant toevoegen →</a><a class="secondary" href="/admin/orders">Orderoverzicht →</a></div></div><div class="panel"><table><thead><tr><th>Naam</th><th>E-mail</th><th>WooCommerce</th><th>Toegang</th><th>Actie</th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">Nog geen klanten toegevoegd.</td></tr>')+'</tbody></table></div>'));
+ const rows=customers.map(c=>'<tr><td>'+esc(c.name)+'</td><td>'+esc(c.email)+'</td><td>'+(c.wc_customer_id?'#'+esc(c.wc_customer_id):'Niet gekoppeld')+'</td><td>'+(c.active?'Actief':'Uitgeschakeld')+'</td><td><a href="/admin/customers/'+c.id+'">Bekijken</a> · <form method="post" action="/admin/customers/'+c.id+'/access" style="display:inline"><button class="secondary">'+(c.active?'Uitschakelen':'Activeren')+'</button></form> <form method="post" action="/admin/customers/'+c.id+'/delete" style="display:inline" onsubmit="return confirm(&quot;Klanttoegang uitschakelen? Alle lokale en WooCommerce-bestellingen blijven bewaard. De klant kan niet meer inloggen.&quot;)"><button class="danger">Verwijderen</button></form></td></tr>').join("");
+ res.send(page(req,"Beheer", (req.query.customer_deleted?'<div class="success">Klanttoegang is uitgeschakeld. Bestellingen en gekoppelde gegevens zijn bewaard gebleven.</div>':'')+'<div class="page-title"><div class="eyebrow">BEHEER</div><h1>Klanten</h1><p>Alleen WooCommerce-klanten die je hier toevoegt krijgen toegang.</p><div class="row-actions"><a class="primary inline" href="/admin/customers/search">Klant toevoegen →</a><a class="secondary" href="/admin/orders">Orderoverzicht →</a></div></div><div class="panel"><table><thead><tr><th>Naam</th><th>E-mail</th><th>WooCommerce</th><th>Toegang</th><th>Actie</th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">Nog geen klanten toegevoegd.</td></tr>')+'</tbody></table></div>'));
 });
 
 app.get("/admin/mail",requireAuth,requireAdmin,(req,res)=>{
@@ -502,9 +502,8 @@ app.post("/admin/customers/:id/delete",requireAuth,requireAdmin,(req,res)=>{
  const id=Number(req.params.id);
  const customer=db.prepare("SELECT id FROM users WHERE id=? AND role='customer'").get(id);
  if(!customer)return res.status(404).send("Klant niet gevonden.");
- // Foreign-key CASCADE verwijdert lokale orders, abonnementen, kosten en caches.
- // De externe WooCommerce-klant wordt bewust niet verwijderd.
- const result=db.prepare("DELETE FROM users WHERE id=? AND role='customer'").run(id);
+ // Behoud lokale orders en WooCommerce-koppelingen: verwijder alleen accounttoegang.
+ const result=db.prepare("UPDATE users SET active=0 WHERE id=? AND role='customer'").run(id);
  if(!result.changes)return res.status(404).send("Klant niet gevonden.");
  res.redirect("/admin?customer_deleted=1");
 });
