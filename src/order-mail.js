@@ -6,7 +6,7 @@ const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const path = require("path");
 
-const FROM_ADDRESS = String(process.env.SMTP_FROM || "supplypanel@bendemen.nl").trim();
+const FROM_ADDRESS = String(process.env.SMTP_FROM || "supplypanel@notifications.bendemen.com").trim();
 const REPLY_TO = String(process.env.SMTP_REPLY_TO || "").trim();
 let smtpTransporter = null;
 
