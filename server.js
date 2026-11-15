@@ -357,9 +357,17 @@ app.get("/orders/:id",requireAuth,async(req,res)=>{
   res.send(page(req,"Bestelling",`<a class="back" href="/orders">← Terug naar bestellingen</a><div class="page-title"><div class="eyebrow">BESTELLING SUPPLY-${o.local_order_no||id}${fresh.wc_order_id?` · WC #${fresh.wc_order_id}`:""}</div><h1>Bestelling bekijken</h1><p>Aangemaakt op ${esc(o.created_at)} · <span class="status">${esc(displayOrderStatus(fresh))}</span></p></div>${payBlock}${cancelBlock}${invoiceBlock}${fresh.notes?`<div class="panel"><h2>Notities bij deze bestelling</h2><p style="white-space:pre-wrap">${esc(fresh.notes)}</p></div>`:""}<div class="panel"><div class="table-wrap"><table><thead><tr><th>Product</th><th>Aantal</th><th>Prijs per stuk</th><th>Totaal</th></tr></thead><tbody>${rows}</tbody></table></div><div class="total-line"><span>Ordertotaal</span><strong>${money(o.total_cents)}</strong></div></div>${!fresh.recurring_order_id&&fresh.allow_reorder!==0?`<form method="post" action="/orders/${id}/reorder" class="reorder-form"><div><strong>Deze bestelling opnieuw bestellen?</strong><p>We maken een nieuwe order aan met dezelfde producten en aantallen.</p><label>Notitie bij herbestelling (optioneel)<textarea name="notes" rows="2" maxlength="2000" placeholder="Bijvoorbeeld: graag dezelfde uitvoering en verpakking"></textarea></label></div><button class="primary">Opnieuw bestellen <span>→</span></button></form>`:`<p class="hint">Dit is een maatwerkbestelling. Opnieuw bestellen is voor deze bestelling uitgeschakeld.</p>`}`));
 });
 app.get("/orders/:id/pay",requireAuth,(req,res)=>{
-  const id=Number(req.params.id),order=db.prepare("SELECT id,payment_url,wc_status,workflow_status FROM orders WHERE id=? AND user_id=?").get(id,req.session.user.id);
+  const id=Number(req.params.id),order=db.prepare("SELECT o.id,o.payment_url,o.wc_status,o.workflow_status,o.wc_order_id,u.wc_customer_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=? AND o.user_id=?").get(id,req.session.user.id);
   if(!order)return res.status(404).send("Bestelling niet gevonden.");
   if(!order.payment_url||["processing","completed","refunded","cancelled"].includes(order.wc_status)||order.workflow_status==="cancelled")return res.status(409).send("Voor deze bestelling is geen betaling (meer) nodig.");
+  const ssoUrl=String(process.env.WC_SSO_URL||"").trim().replace(/\\/$/,"");
+  const ssoSecret=String(process.env.WC_SSO_SECRET||"");
+  if(ssoUrl&&ssoSecret.length>=32&&order.wc_order_id&&order.wc_customer_id&&/^\\d+$/.test(String(order.wc_customer_id))){
+    const claims={order_id:Number(order.wc_order_id),customer_id:Number(order.wc_customer_id),nonce:crypto.randomBytes(24).toString("hex"),exp:Math.floor(Date.now()/1000)+90};
+    const encoded=Buffer.from(JSON.stringify(claims)).toString("base64url");
+    const signature=crypto.createHmac("sha256",ssoSecret).update(encoded).digest("hex");
+    return res.redirect(303,ssoUrl+"/wp-json/bendemen-sso/v1/login?token="+encodeURIComponent(encoded+"."+signature));
+  }
   res.redirect(order.payment_url);
 });
 app.get("/orders/:id/pdf",requireAuth,async(req,res)=>{
