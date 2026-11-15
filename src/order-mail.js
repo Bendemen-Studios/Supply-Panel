@@ -14,8 +14,7 @@ function configured() {
   return Boolean(
     process.env.SMTP_HOST &&
     process.env.SMTP_USER &&
-    process.env.SMTP_PASS &&
-    process.env.PANEL_PUBLIC_URL
+    process.env.SMTP_PASS
   );
 }
 
@@ -36,6 +35,20 @@ function transporter() {
     socketTimeout: 30000
   });
   return smtpTransporter;
+}
+
+async function verifySmtpConnection() {
+  const smtp = transporter();
+  await smtp.verify();
+  return {
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 465),
+    secure: process.env.SMTP_SECURE === undefined
+      ? Number(process.env.SMTP_PORT || 465) === 465
+      : String(process.env.SMTP_SECURE).toLowerCase() === "true",
+    user: process.env.SMTP_USER,
+    from: FROM_ADDRESS
+  };
 }
 
 function makePdf(order) {
@@ -143,5 +156,6 @@ module.exports = {
   sendAutomatedOrderEmail,
   sendScheduledOrderReminder,
   makePdf,
-  configured
+  configured,
+  verifySmtpConnection
 };
