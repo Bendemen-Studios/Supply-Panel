@@ -157,6 +157,11 @@ async function syncDeletedWooOrders(){
    try{
     const wcOrder=await woo.getOrder(row.wc_order_id);
     const items=[...(Array.isArray(wcOrder.line_items)?wcOrder.line_items:[]),...(Array.isArray(wcOrder.fee_lines)?wcOrder.fee_lines:[])];
+    // WooCommerce kan bij een prijsupdate de lokale productomschrijving of
+    // zichtbare configuratiemeta niet terugsturen. Bewaar die gegevens dan
+    // vanuit de bestaande orderregel in plaats van ze leeg te synchroniseren.
+    const localItems=db.prepare("SELECT id,product_id,product_name,meta_data FROM order_items WHERE order_id=? ORDER BY id").all(row.id);
+    const usedLocalIds=new Set();
     const tx=db.transaction(()=>{
      db.prepare("UPDATE orders SET wc_order_number=?,wc_status=?,total_cents=?,currency=? WHERE id=? AND wc_order_id=?")
       .run(wcOrder.number!=null?String(wcOrder.number):row.wc_order_id,String(wcOrder.status||"pending"),Math.round(Number(wcOrder.total||0)*100),String(wcOrder.currency||"EUR"),row.id,row.wc_order_id);
@@ -166,7 +171,16 @@ async function syncDeletedWooOrders(){
       const quantity=Math.max(1,Math.trunc(Number(item.quantity)||1));
       const lineTotal=Number(item.total);
       const unitPriceCents=Number.isFinite(lineTotal)?Math.round(lineTotal*100/quantity):0;
-      insert.run(row.id,item.product_id?String(item.product_id):null,String(item.name||"WooCommerce regel"),quantity,unitPriceCents,JSON.stringify(Array.isArray(item.meta_data)?item.meta_data:[]));
+      const localMatch=localItems.find(local=>!usedLocalIds.has(local.id)&&(
+       (item.product_id&&local.product_id&&String(item.product_id)===String(local.product_id))||
+       (!item.product_id&&String(item.name||"").trim()&&String(item.name).trim()===String(local.product_name||"").trim())
+      ))||localItems.find(local=>!usedLocalIds.has(local.id));
+      if(localMatch)usedLocalIds.add(localMatch.id);
+      let remoteMeta=Array.isArray(item.meta_data)?item.meta_data:[];
+      let localMeta=[];try{localMeta=localMatch?JSON.parse(localMatch.meta_data||"[]"):[];}catch(_){localMeta=[];}
+      const metaData=remoteMeta.length?remoteMeta:localMeta;
+      const productName=String(item.name||"").trim()||String(localMatch?.product_name||"WooCommerce regel");
+      insert.run(row.id,item.product_id?String(item.product_id):(localMatch?.product_id||null),productName,quantity,unitPriceCents,JSON.stringify(metaData));
      }
     });
     tx();stats.updated++;
