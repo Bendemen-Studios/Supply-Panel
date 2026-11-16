@@ -208,6 +208,7 @@ function loadMailOrder(orderId) {
   const items=db.prepare("SELECT product_name name,quantity FROM order_items WHERE order_id=?").all(orderId);
   return {
     id:row.id,
+    user_id:row.user_id,
     number:"SUPPLY-"+(row.local_order_no||row.id),
     total:(Number(row.total_cents||0)/100).toFixed(2),
     currency:row.currency||"EUR",
