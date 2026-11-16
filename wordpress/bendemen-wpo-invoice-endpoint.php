@@ -34,11 +34,19 @@ add_action('rest_api_init', function () {
             if ($contents === false || substr($contents, 0, 5) !== '%PDF-') {
                 return new WP_Error('invalid_invoice_pdf', 'WP Overnight did not return a valid PDF.', ['status' => 502]);
             }
-            $response = new WP_REST_Response($contents, 200);
-            $response->header('Content-Type', 'application/pdf');
-            $response->header('Content-Disposition', 'inline; filename="invoice-' . absint($order->get_id()) . '.pdf"');
-            $response->header('Cache-Control', 'private, no-store');
-            return $response;
+            // Gebruik het officiële factuurnummer van WP Overnight, niet het
+            // Supply Panel- of interne WooCommerce order-ID.
+            $invoice_number = method_exists($document, 'get_number')
+                ? (string) $document->get_number()
+                : (string) $order->get_order_number();
+            $invoice_number = sanitize_file_name($invoice_number);
+            if ($invoice_number === '') {
+                $invoice_number = sanitize_file_name((string) $order->get_order_number());
+            }
+            return new WP_REST_Response([
+                'pdf_base64' => base64_encode($contents),
+                'invoice_number' => $invoice_number,
+            ], 200);
         },
     ]);
 });
