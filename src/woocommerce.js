@@ -42,6 +42,7 @@ async function createWooOrder(order,items){
   set_paid:false,
   customer_id:order.wc_customer_id?Number(order.wc_customer_id):0,
   billing:{email:order.customer_email,first_name:order.customer_name},
+  customer_note:String(order.notes||""),
   line_items,
   fee_lines,
   meta_data:[{key:"_bendemen_supply_panel_order",value:"1"},{key:"_bendemen_local_order_id",value:String(order.id)}]
@@ -65,6 +66,7 @@ async function updateWooOrder(wcOrderId,items){
  }
  return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{line_items,fee_lines});
 }
+async function updateWooOrderNote(wcOrderId,notes){return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{customer_note:String(notes||"")});}
 async function createWooSubscription(subscription,items){
  const line_items=[],fee_lines=[];
  for(const item of items){
@@ -90,4 +92,4 @@ async function getInvoicePdf(wcOrderId){
  return pdf;
 }
 async function getOrder(wcOrderId){return request(`orders/${encodeURIComponent(wcOrderId)}`);}
-module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createWooOrder,updateWooOrder,createWooSubscription,refreshWooOrder,getInvoicePdf};
+module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createWooOrder,updateWooOrder,updateWooOrderNote,createWooSubscription,refreshWooOrder,getInvoicePdf};
