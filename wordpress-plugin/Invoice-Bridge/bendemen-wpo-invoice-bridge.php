@@ -22,13 +22,16 @@ function bendemen_wpo_invoice_bridge_generate_token() {
  * Return the configured token, lazily creating one for new installations.
  */
 function bendemen_wpo_invoice_bridge_get_token() {
+  // Een expliciet ingestelde wp-config.php-constante heeft altijd voorrang
+  // op een eventueel eerder opgeslagen database-token.
+  if (defined('BENDEMEN_WPO_WCPDF_API_TOKEN') && BENDEMEN_WPO_WCPDF_API_TOKEN !== '') {
+    return (string) BENDEMEN_WPO_WCPDF_API_TOKEN;
+  }
+
   $token = (string) get_option(BENDEMEN_WPO_INVOICE_BRIDGE_OPTION, '');
-  if ($token === '' && !defined('BENDEMEN_WPO_WCPDF_API_TOKEN')) {
+  if ($token === '') {
     $token = bendemen_wpo_invoice_bridge_generate_token();
     add_option(BENDEMEN_WPO_INVOICE_BRIDGE_OPTION, $token, '', false);
-  }
-  if ($token === '' && defined('BENDEMEN_WPO_WCPDF_API_TOKEN')) {
-    $token = (string) BENDEMEN_WPO_WCPDF_API_TOKEN;
   }
   return $token;
 }
