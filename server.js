@@ -107,7 +107,7 @@ async function syncWooOrder(orderId) {
     const legacyItems=db.prepare("SELECT id,product_id,product_name,meta_data FROM order_items WHERE order_id=?").all(orderId);
     const repair=db.prepare("UPDATE order_items SET product_id=?,meta_data=? WHERE id=?");
     for(const item of legacyItems){
-      if(!item.product_id||!/^\\d+$/.test(String(item.product_id)))continue;
+      if(!item.product_id||!/^[0-9]+$/.test(String(item.product_id)))continue;
       const catalog=db.prepare("SELECT id,wc_product_id,meta_data FROM products WHERE name=? ORDER BY id LIMIT 1").get(item.product_name);
       if(catalog&&catalog.wc_product_id&&String(item.product_id)===String(catalog.id)){
         let meta=String(item.meta_data||"[]");
