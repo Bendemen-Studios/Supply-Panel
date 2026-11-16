@@ -94,7 +94,7 @@ async function getInvoicePdf(wcOrderId){
  const pdf=Buffer.from(response.data.pdf_base64,"base64");
  if(pdf.subarray(0,5).toString()!=="%PDF-")throw new Error("WP Overnight retourneerde geen geldige PDF");
  // Attach the official WP Overnight invoice number for download filenames.
- pdf.invoiceNumber=String(response.data.invoice_number||"").replace(/[^a-zA-Z0-9._-]/g,"").slice(0,100);
+ pdf.filename=String(response.data.filename||"").replace(/[\\/\\\\\\r\\n"]/g,"").slice(0,180)||`invoice-${wcOrderId}.pdf`;
  return pdf;
 }
 async function getOrder(wcOrderId){return request(`orders/${encodeURIComponent(wcOrderId)}`);}
