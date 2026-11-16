@@ -395,8 +395,8 @@ app.post("/logout",requireAuth,(req,res)=>req.session.destroy(()=>res.redirect("
 
 app.get("/",requireAuth,(req,res)=>{
   const user=req.session.user,orders=getOrders(user.id,5);
-  const fixedCosts=db.prepare("SELECT COALESCE(SUM(amount_cents),0) total FROM monthly_costs WHERE user_id=? AND active=1").get(user.id).total;
-  const subscriptionCosts=db.prepare("SELECT COALESCE(SUM(amount_cents),0) total FROM recurring_orders WHERE user_id=? AND status='active'").get(user.id).total;
+  const fixedCosts=db.prepare("SELECT COALESCE(SUM(ROUND(amount_cents * CASE interval WHEN 'week' THEN 52.0/12 WHEN 'year' THEN 1.0/12 ELSE 1 END)),0) total FROM monthly_costs WHERE user_id=? AND active=1").get(user.id).total;
+  const subscriptionCosts=db.prepare("SELECT COALESCE(SUM(ROUND(amount_cents * CASE interval WHEN 'week' THEN 52.0/12 WHEN 'year' THEN 1.0/12 ELSE 1 END)),0) total FROM recurring_orders WHERE user_id=? AND status='active'").get(user.id).total;
   const monthly=fixedCosts+subscriptionCosts;
   const orderSpend=db.prepare("SELECT COALESCE(SUM(total_cents),0) total FROM orders WHERE user_id=? AND strftime('%Y-%m',created_at)=strftime('%Y-%m','now')").get(user.id).total;
   const body=`<div class="hero"><div><div class="eyebrow">BENDEMEN SUPPLY PANEL</div><h1>Goedendag, ${esc(user.name.split(" ")[0])}.</h1><p>Alles rondom jouw Inkoop Bestellingen op één plek.</p></div><a class="primary inline" href="/orders">Mijn bestellingen <span>→</span></a></div>
