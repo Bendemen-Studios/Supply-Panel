@@ -101,7 +101,7 @@ function getOrders(userId, limit = 100) {
 }
 async function syncWooOrder(orderId) {
   try {
-    const order=db.prepare("SELECT o.*,u.wc_customer_id,u.email customer_email,u.name customer_name FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=?").get(orderId);
+    const order=db.prepare("SELECT o.*,u.wc_customer_id,u.email customer_email,u.name customer_name,u.billing_first_name,u.billing_last_name,u.billing_company,u.billing_address_1,u.billing_address_2,u.billing_postcode,u.billing_city,u.billing_state,u.billing_country,u.billing_phone FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=?").get(orderId);
     if(!order)throw new Error("Lokale bestelling niet gevonden.");
     const items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
     const result=order.wc_order_id?await woo.updateWooOrder(order.wc_order_id,items):await woo.createWooOrder(order,items);
@@ -142,13 +142,8 @@ async function syncDeletedWooOrders(){
  orderCleanupRunning=true;
  const stats={busy:false,checked:0,updated:0,removed:0,failed:0};
  try{
-  // Lokale orders zonder WooCommerce-koppeling kunnen niet via WooCommerce bestaan.
-  // Verwijder ze tijdens een expliciete handmatige refresh zodat SUPPLY-nummers vrijkomen.
-  const unlinked=db.prepare("SELECT id FROM orders WHERE wc_order_id IS NULL OR wc_order_id='' ORDER BY id").all();
-  for(const row of unlinked){
-   db.prepare("DELETE FROM orders WHERE id=? AND (wc_order_id IS NULL OR wc_order_id='')").run(row.id);
-   stats.removed++;
-  }
+  // Behoud lokale orders zonder WooCommerce-koppeling. Dit zijn vaak orders
+  // waarvan de achtergrond-sync nog loopt of tijdelijk is mislukt.
   const linked=db.prepare("SELECT id,wc_order_id FROM orders WHERE wc_order_id IS NOT NULL AND wc_order_id != '' ORDER BY id").all();
   for(const row of linked){
    stats.checked++;
@@ -317,10 +312,11 @@ app.get("/email-login", async (req,res,next) => {
     if(parts.length!==2||!process.env.SESSION_SECRET) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
     const [encoded,signature]=parts;
     const expected=crypto.createHmac("sha256",process.env.SESSION_SECRET).update(encoded).digest("hex");
-    if(!crypto.timingSafeEqual(Buffer.from(signature),Buffer.from(expected))) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
+    const suppliedSignature=Buffer.from(signature,"utf8"),expectedSignature=Buffer.from(expected,"utf8");
+    if(suppliedSignature.length!==expectedSignature.length||!crypto.timingSafeEqual(suppliedSignature,expectedSignature)) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
     const payload=JSON.parse(Buffer.from(encoded,"base64url").toString("utf8"));
     const now=Math.floor(Date.now()/1000);
-    if(!payload.user_id||!payload.order_id||!payload.nonce||(payload.exp&&(payload.exp<now||payload.exp>now+16*60))) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
+    if(!payload.user_id||!payload.order_id||!payload.nonce||!Number.isInteger(payload.exp)||payload.exp<now||payload.exp>now+16*60) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
     const order=db.prepare("SELECT id,user_id FROM orders WHERE id=? AND user_id=?").get(Number(payload.order_id),Number(payload.user_id));
     const user=db.prepare("SELECT id,name,email,role,active FROM users WHERE id=?").get(Number(payload.user_id));
     if(!order||!user||Number(user.active)!==1||user.role!=="customer") return res.status(403).send("Deze bestelling of dit account is niet beschikbaar.");
