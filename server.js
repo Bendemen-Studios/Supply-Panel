@@ -970,4 +970,6 @@ setTimeout(()=>processRecurringOrders().catch(err=>console.error("Recurring sche
 setInterval(()=>processRecurringOrders().catch(err=>console.error("Recurring scheduler:",err.message)),60000).unref();
 setTimeout(()=>syncDeletedWooOrders(),15000).unref();
 setInterval(()=>syncDeletedWooOrders(),300000).unref();
+setTimeout(()=>syncWooCustomerBilling(),20000).unref();
+setInterval(()=>syncWooCustomerBilling(),300000).unref();
 app.listen(PORT, "0.0.0.0", ()=>console.log(`Bendemen Supply Panel draait op poort ${PORT}`));
