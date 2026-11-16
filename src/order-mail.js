@@ -79,6 +79,7 @@ function orderUrl(order, isTest) {
     user_id: Number(order.user_id),
     order_id: Number(order.id),
     nonce: crypto.randomBytes(24).toString("hex"),
+    exp: Math.floor(Date.now() / 1000) + 15 * 60,
   };
   const encoded = Buffer.from(JSON.stringify(claims)).toString("base64url");
   const signature = crypto.createHmac("sha256", process.env.SESSION_SECRET).update(encoded).digest("hex");
