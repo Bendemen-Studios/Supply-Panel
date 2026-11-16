@@ -556,11 +556,43 @@ app.post("/admin/orders/:id/resend-email",requireAuth,requireAdmin,async(req,res
  const result=await sendLoggedMail({type:"new_order",to,orderId:id});
  res.redirect("/admin/orders?"+(result.success?"mail_resent=1":"mail_failed=1"));
 });
+
+app.get("/admin/orders/new",requireAuth,requireAdmin,(req,res)=>{
+ const customers=db.prepare("SELECT id,name,email FROM users WHERE role='customer' AND active=1 ORDER BY name").all();
+ const products=db.prepare("SELECT id,name,sku,price_cents FROM products WHERE active=1 ORDER BY name").all();
+ const customerOptions=customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+' · '+esc(c.email)+'</option>').join("");
+ const productRows=products.map(p=>'<tr><td><label style="display:flex;align-items:center;gap:10px"><input type="checkbox" name="product_ids" value="'+p.id+'" style="width:auto;margin:0"><span>'+esc(p.name)+(p.sku?' · '+esc(p.sku):'')+'</span></label></td><td>'+money(p.price_cents)+'</td><td><input type="number" name="quantity_'+p.id+'" min="1" max="999" value="1" style="max-width:90px" aria-label="Aantal '+esc(p.name)+'"></td></tr>').join("");
+ const body='<a class="back" href="/admin/orders">← Orderoverzicht</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Supply order aanmaken</h1><p>Maak handmatig een nieuwe Supply-bestelling aan voor een klant.</p></div>'+
+ (customers.length?'<form method="post" action="/admin/orders/new" class="stack"><div class="panel"><label>Klant<select name="user_id" required><option value="">Selecteer een klant</option>'+customerOptions+'</select></label></div><div class="panel"><h2>Producten</h2><p class="hint">Selecteer één of meer producten en stel per product het aantal in.</p><div class="table-wrap"><table><thead><tr><th>Product</th><th>Prijs per stuk</th><th>Aantal</th></tr></thead><tbody>'+productRows+'</tbody></table></div></div><div class="panel"><label>Opmerking voor op de factuur<textarea name="notes" rows="3" maxlength="2000" placeholder="Optionele factuuropmerking"></textarea></label><button class="primary">Supply order aanmaken</button></div></form>':'<div class="panel"><p>Er zijn geen actieve klanten beschikbaar. Activeer of voeg eerst een klant toe.</p></div>');
+ res.send(page(req,"Supply order aanmaken",body));
+});
+app.post("/admin/orders/new",requireAuth,requireAdmin,(req,res)=>{
+ const userId=Number(req.body.user_id),customer=db.prepare("SELECT id FROM users WHERE id=? AND role='customer' AND active=1").get(userId);
+ if(!customer)return res.status(400).send("Selecteer een geldige actieve klant.");
+ const raw=req.body.product_ids||[],ids=[...new Set((Array.isArray(raw)?raw:[raw]).map(Number).filter(n=>Number.isSafeInteger(n)&&n>0))];
+ if(!ids.length)return res.status(400).send("Selecteer minimaal één product.");
+ const placeholders=ids.map(()=>"?").join(",");
+ const products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 AND id IN ("+placeholders+")").all(...ids);
+ if(products.length!==ids.length)return res.status(400).send("Een of meer geselecteerde producten zijn niet meer actief.");
+ const lines=[];
+ for(const product of products){
+  const quantity=Number(req.body["quantity_"+product.id]||1);
+  if(!Number.isInteger(quantity)||quantity<1||quantity>999)return res.status(400).send("Controleer de aantallen. Gebruik minimaal 1 en maximaal 999.");
+  lines.push({product_id:String(product.id),product_name:product.name,quantity,unit_price_cents:product.price_cents});
+ }
+ const notes=String(req.body.notes||"").trim().slice(0,2000);
+ try{
+  const orderId=createOrder(userId,lines,null,notes);
+  queueOrderIntegrations(orderId);
+  const created=db.prepare("SELECT local_order_no FROM orders WHERE id=?").get(orderId);
+  res.redirect("/admin/orders?order_created=1&order_number="+encodeURIComponent("SUPPLY-"+(created.local_order_no||orderId)));
+ }catch(err){console.error("Admin supply order creation failed:",err.message);res.status(500).send("Supply order aanmaken is mislukt.");}
+});
 app.get("/admin/orders",requireAuth,requireAdmin,(req,res)=>{
  const rows=db.prepare(`SELECT o.id,o.local_order_no,o.created_at,o.total_cents,o.status,o.wc_status,o.wc_order_id,o.wc_order_number,o.payment_url,u.name customer_name,u.email customer_email,COALESCE(NULLIF(r.email_override,''),u.email) mail_recipient,
  (SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary
  FROM orders o JOIN users u ON u.id=o.user_id LEFT JOIN recurring_orders r ON r.id=o.recurring_order_id ORDER BY o.id DESC LIMIT 500`).all();
- const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p>'+(req.query.mail_resent?'<div class="success">Bestellingsmail opnieuw verzonden.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt. Controleer de mail logs.</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + '<div class="panel table-wrap"><table><thead><tr><th>Lokale order</th><th>Klant</th><th>Producten</th><th>Datum</th><th>Bedrag</th><th>WooCommerce ordernummer</th><th>WooCommerce status</th><th>E-mail</th></tr></thead><tbody>'+
+ const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail opnieuw verzonden.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt. Controleer de mail logs.</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + '<div class="panel table-wrap"><table><thead><tr><th>Lokale order</th><th>Klant</th><th>Producten</th><th>Datum</th><th>Bedrag</th><th>WooCommerce ordernummer</th><th>WooCommerce status</th><th>E-mail</th></tr></thead><tbody>'+
  (rows.map(o=>'<tr><td><strong>SUPPLY-'+String(o.local_order_no||o.id)+'</strong></td><td>'+esc(o.customer_name)+'<small>'+esc(o.customer_email)+'</small></td><td>'+esc(o.summary||'Geen orderregels')+'</td><td>'+esc(o.created_at)+'</td><td>'+money(o.total_cents)+'</td><td>'+(o.wc_order_id?'#'+esc(o.wc_order_number||o.wc_order_id):'Niet gekoppeld')+'</td><td>'+esc(o.wc_status||'—')+'</td><td><form method="post" action="/admin/orders/'+o.id+'/resend-email" class="stack" onsubmit="return confirm(&quot;Bestellingsmail opnieuw versturen?&quot;)"><input type="email" name="to" value="'+esc(o.mail_recipient)+'" required aria-label="Ontvanger e-mail" style="min-width:190px"><button class="secondary">Mail opnieuw sturen</button></form></td></tr>').join('')||'<tr><td colspan="8">Nog geen bestellingen.</td></tr>')+
  '</tbody></table></div><p class="hint">Toont de laatste 500 lokale bestellingen.</p>';
  res.send(page(req,"Orderoverzicht",body));
