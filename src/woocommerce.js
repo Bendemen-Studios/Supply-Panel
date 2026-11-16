@@ -60,7 +60,7 @@ async function updateWooOrder(wcOrderId,items){
   const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
   const wcProductId=item.product_id&&/^\d+$/.test(String(item.product_id))?String(item.product_id):null;
   if(wcProductId){
-   const match=(existing.line_items||[]).find(line=>String(line.product_id)===wcProductId);
+   const match=(existing.line_items||[]).find(line=>String(line.product_id)===wcProductId)||existing.line_items?.[line_items.length];
    line_items.push({...(match?{id:match.id}:{}),product_id:Number(wcProductId),quantity:item.quantity,subtotal:total,total,meta_data:normalizeLineMeta(item.meta_data)});
   }else{
    const name=item.quantity>1?`${item.product_name} (aantal: ${item.quantity})`:item.product_name;
