@@ -201,6 +201,8 @@ addColumn("orders", "allow_reorder", "INTEGER NOT NULL DEFAULT 1");
 addColumn("orders", "show_in_history", "INTEGER NOT NULL DEFAULT 0");
 addColumn("orders", "local_order_no", "INTEGER");
 addColumn("orders", "wc_order_number", "TEXT");
+// Zorg dat bestaande lokale Supply-orders zichtbaar zijn in het klantaccount.
+db.exec("UPDATE orders SET show_in_history=1 WHERE local_order_no IS NOT NULL OR recurring_order_id IS NOT NULL");
 db.exec("UPDATE orders SET show_in_history=1 WHERE allow_reorder=0 AND notes LIKE 'Handmatig toegevoegd door beheer%'");
 addColumn("monthly_costs", "interval", "TEXT NOT NULL DEFAULT 'month'");
 addColumn("monthly_costs", "wc_order_id", "TEXT");
