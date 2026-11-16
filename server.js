@@ -841,6 +841,42 @@ function businessDate(){
  return value.year+"-"+value.month+"-"+value.day;
 }
 
+let wooBillingSyncRunning=false;
+async function syncWooCustomerBilling(){
+ if(wooBillingSyncRunning)return {busy:true,checked:0,updated:0,failed:0};
+ wooBillingSyncRunning=true;
+ const stats={busy:false,checked:0,updated:0,failed:0};
+ try{
+  const customers=db.prepare("SELECT id,wc_customer_id FROM users WHERE role='customer' AND wc_customer_id IS NOT NULL AND wc_customer_id != '' ORDER BY id").all();
+  for(const user of customers){
+   stats.checked++;
+   try{
+    const customer=await woo.getCustomer(user.wc_customer_id);
+    const billing=customer&&customer.billing?customer.billing:{};
+    const value=(key,fallback="")=>String(billing[key]??fallback).trim();
+    const first=value("first_name",customer.first_name||"");
+    const last=value("last_name",customer.last_name||"");
+    db.prepare(`UPDATE users SET
+     billing_first_name=?,billing_last_name=?,billing_company=?,billing_address_1=?,
+     billing_address_2=?,billing_postcode=?,billing_city=?,billing_state=?,
+     billing_country=?,billing_phone=?
+     WHERE id=? AND wc_customer_id=?`).run(
+      first,last,value("company"),value("address_1"),value("address_2"),
+      value("postcode"),value("city"),value("state"),value("country","NL").toUpperCase().slice(0,2),
+      value("phone"),user.id,String(user.wc_customer_id)
+     );
+    stats.updated++;
+   }catch(error){
+    stats.failed++;
+    console.error("WooCommerce factuurgegevens synchroniseren mislukt voor klant "+user.wc_customer_id+":",error.response?.data?.message||error.message);
+   }
+  }
+  if(stats.checked)console.log("WooCommerce factuurgegevens gesynchroniseerd:",JSON.stringify(stats));
+ }catch(error){stats.failed++;console.error("WooCommerce factuurgegevens synchronisatie:",error.message);}
+ finally{wooBillingSyncRunning=false;}
+ return stats;
+}
+
 let recurringSchedulerRunning=false;
 async function processRecurringOrders(){
  if(recurringSchedulerRunning)return;
