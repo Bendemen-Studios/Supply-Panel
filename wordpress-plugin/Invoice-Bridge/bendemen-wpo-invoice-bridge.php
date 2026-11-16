@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Bendemen WP Overnight Invoice Bridge
  * Description: Generates and returns WP Overnight PDF invoices to the authenticated Bendemen Supply Panel integration.
- * Version: 1.2.0
+ * Version: 1.3.0
  */
 
 if (!defined('ABSPATH')) {
@@ -221,9 +221,20 @@ add_action('rest_api_init', function () {
           return new WP_Error('invalid_pdf', 'WP Overnight returned an invalid PDF.', array('status' => 502));
         }
 
+        // Laat WP Overnight zelf de definitieve downloadnaam samenstellen.
+        // get_filename() voert de ingestelde custom filename en de filter
+        // wpo_wcpdf_filename uit met de juiste download-context en argumenten.
+        $filename = method_exists($document, 'get_filename')
+          ? $document->get_filename('download', array(
+              'order_ids' => array($order->get_id()),
+              'output' => 'pdf',
+            ))
+          : 'invoice-' . $order->get_order_number() . '.pdf';
+
         return rest_ensure_response(array(
           'order_id' => $order->get_id(),
           'invoice_number' => method_exists($document, 'get_number') ? $document->get_number() : '',
+          'filename' => sanitize_file_name($filename),
           'pdf_base64' => base64_encode($pdf),
         ));
       } catch (Throwable $error) {
