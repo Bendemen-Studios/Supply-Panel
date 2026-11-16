@@ -140,9 +140,17 @@ let orderCleanupRunning=false;
 async function syncDeletedWooOrders(){
  if(orderCleanupRunning)return {busy:true,checked:0,updated:0,removed:0,failed:0};
  orderCleanupRunning=true;
- const stats={busy:false,checked:0,updated:0,removed:0,failed:0};
+ const stats={busy:false,checked:0,updated:0,removed:0,failed:0,created:0};
  try{
-  // Behoud lokale orders zonder WooCommerce-koppeling. Dit zijn vaak orders
+  // Probeer eerst alle lokale orders zonder WooCommerce-koppeling alsnog naar WooCommerce te sturen.
+  const pending=db.prepare("SELECT id FROM orders WHERE wc_order_id IS NULL OR wc_order_id='' ORDER BY id").all();
+  for(const row of pending){
+   stats.checked++;
+   const result=await syncWooOrder(row.id);
+   if(result&&result.id)stats.created++;
+   else stats.failed++;
+  }
+  // Behoud lokale orders zonder WooCommerce-koppeling als WooCommerce tijdelijk niet bereikbaar is. Dit zijn vaak orders
   // waarvan de achtergrond-sync nog loopt of tijdelijk is mislukt.
   const linked=db.prepare("SELECT id,wc_order_id FROM orders WHERE wc_order_id IS NOT NULL AND wc_order_id != '' ORDER BY id").all();
   for(const row of linked){
@@ -185,7 +193,7 @@ function createOrder(userId, lines, sourceOrderId=null, notes="", recurringOrder
   const total=lines.reduce((sum,x)=>sum+x.quantity*x.unit_price_cents,0);
   const tx=db.transaction(()=>{
     const nextNo=nextFreeSupplyOrderNo();
-    const order=db.prepare("INSERT INTO orders (user_id,status,total_cents,source_order_id,notes,recurring_order_id,local_order_no) VALUES (?,'Nieuw',?,?,?,?,?)").run(userId,total,sourceOrderId,notes,recurringOrderId,nextNo);
+    const order=db.prepare("INSERT INTO orders (user_id,status,total_cents,source_order_id,notes,recurring_order_id,local_order_no,show_in_history) VALUES (?,'Nieuw',?,?,?,?,?,1)").run(userId,total,sourceOrderId,notes,recurringOrderId,nextNo);
     const insert=db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents) VALUES (?,?,?,?,?)");
     for(const x of lines) insert.run(order.lastInsertRowid,x.product_id||null,x.product_name,x.quantity,x.unit_price_cents);
     return Number(order.lastInsertRowid);
@@ -270,17 +278,22 @@ async function sendOrderCreatedEmail(orderId) {
 
 // Externe koppelingen mogen het aanmaken van een lokale bestelling niet blokkeren.
 // WooCommerce, webhooks en e-mail worden na de directe redirect op de achtergrond verwerkt.
-function queueOrderIntegrations(orderId) {
+function queueOrderNotifications(orderId) {
   setImmediate(async () => {
-    try { await syncWooOrder(orderId); } catch (err) {
-      console.error("WooCommerce achtergrond-sync mislukt voor order "+orderId+":", err.message);
-    }
     try { await sendOrderWebhook(orderId); } catch (err) {
       console.error("Order webhook mislukt voor order "+orderId+":", err.message);
     }
     try { await sendOrderCreatedEmail(orderId); } catch (err) {
       console.error("Order e-mail mislukt voor order "+orderId+":", err.message);
     }
+  });
+}
+function queueOrderIntegrations(orderId) {
+  setImmediate(async () => {
+    try { await syncWooOrder(orderId); } catch (err) {
+      console.error("WooCommerce achtergrond-sync mislukt voor order "+orderId+":", err.message);
+    }
+    queueOrderNotifications(orderId);
   });
 }
 
@@ -590,7 +603,7 @@ app.post("/admin/mail/:id/resend",requireAuth,requireAdmin,async(req,res)=>{
 app.post("/admin/orders/refresh",requireAuth,requireAdmin,async(req,res)=>{
  const stats=await syncDeletedWooOrders();
  if(stats.busy)return res.status(409).send("Er loopt al een WooCommerce-synchronisatie. Probeer het zo opnieuw.");
- res.redirect("/admin/orders?refresh_checked="+stats.checked+"&refresh_updated="+stats.updated+"&refresh_removed="+stats.removed+"&refresh_failed="+stats.failed);
+ res.redirect("/admin/orders?refresh_checked="+stats.checked+"&refresh_updated="+stats.updated+"&refresh_removed="+stats.removed+"&refresh_failed="+stats.failed+"&refresh_created="+(stats.created||0));
 });
 app.post("/admin/orders/:id/resend-email",requireAuth,requireAdmin,async(req,res)=>{
  const id=Number(req.params.id),to=String(req.body.to||"").trim();
@@ -628,16 +641,18 @@ app.post("/admin/orders/new",requireAuth,requireAdmin,(req,res)=>{
  const notes=String(req.body.notes||"").trim().slice(0,2000);
  try{
   const orderId=createOrder(userId,lines,null,notes);
-  queueOrderIntegrations(orderId);
+  // Directe WooCommerce-sync vóór de redirect; de lokale order blijft zichtbaar, ook als Woo tijdelijk niet bereikbaar is.
+  const wooResult=await syncWooOrder(orderId);
+  queueOrderNotifications(orderId);
   const created=db.prepare("SELECT local_order_no FROM orders WHERE id=?").get(orderId);
-  res.redirect("/admin/orders?order_created=1&order_number="+encodeURIComponent("SUPPLY-"+(created.local_order_no||orderId)));
+  res.redirect("/admin/orders?order_created=1&woo_sync="+(wooResult&&wooResult.id?"ok":"failed")+"&order_number="+encodeURIComponent("SUPPLY-"+(created.local_order_no||orderId)));
  }catch(err){console.error("Admin supply order creation failed:",err.message);res.status(500).send("Supply order aanmaken is mislukt.");}
 });
 app.get("/admin/orders",requireAuth,requireAdmin,(req,res)=>{
  const rows=db.prepare(`SELECT o.id,o.local_order_no,o.created_at,o.total_cents,o.status,o.wc_status,o.wc_order_id,o.wc_order_number,o.payment_url,u.name customer_name,u.email customer_email,COALESCE(NULLIF(r.email_override,''),u.email) mail_recipient,
  (SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary
  FROM orders o JOIN users u ON u.id=o.user_id LEFT JOIN recurring_orders r ON r.id=o.recurring_order_id ORDER BY o.id DESC LIMIT 500`).all();
- const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail opnieuw verzonden.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt. Controleer de mail logs.</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + '<div class="panel table-wrap"><table><thead><tr><th>Lokale order</th><th>Klant</th><th>Producten</th><th>Datum</th><th>Bedrag</th><th>WooCommerce ordernummer</th><th>WooCommerce status</th><th>E-mail</th></tr></thead><tbody>'+
+ const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail opnieuw verzonden.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt. Controleer de mail logs.</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + '<div class="panel table-wrap"><table><thead><tr><th>Lokale order</th><th>Klant</th><th>Producten</th><th>Datum</th><th>Bedrag</th><th>WooCommerce ordernummer</th><th>WooCommerce status</th><th>E-mail</th></tr></thead><tbody>'+
  (rows.map(o=>'<tr><td><strong>SUPPLY-'+String(o.local_order_no||o.id)+'</strong></td><td>'+(String(o.customer_name||"").trim().toLowerCase()===String(o.customer_email||"").trim().toLowerCase()?'<strong>'+esc(o.customer_email)+'</strong>':'<strong>'+esc(o.customer_name)+'</strong><small>'+esc(o.customer_email)+'</small>')+'</td><td>'+esc(o.summary||'Geen orderregels')+'</td><td>'+esc(o.created_at)+'</td><td>'+money(o.total_cents)+'</td><td>'+(o.wc_order_id?'#'+esc(o.wc_order_number||o.wc_order_id):'Niet gekoppeld')+'</td><td>'+esc(o.wc_status||'—')+'</td><td><form method="post" action="/admin/orders/'+o.id+'/resend-email" class="stack" onsubmit="return confirm(&quot;Bestellingsmail opnieuw versturen?&quot;)"><input type="email" name="to" value="'+esc(o.mail_recipient)+'" required aria-label="Ontvanger e-mail" style="min-width:190px"><button class="secondary">Mail opnieuw sturen</button></form></td></tr>').join('')||'<tr><td colspan="8">Nog geen bestellingen.</td></tr>')+
  '</tbody></table></div><p class="hint">Toont de laatste 500 lokale bestellingen.</p>';
  res.send(page(req,"Orderoverzicht",body));
