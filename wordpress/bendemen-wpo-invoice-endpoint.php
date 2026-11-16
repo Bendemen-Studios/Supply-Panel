@@ -34,12 +34,19 @@ add_action('rest_api_init', function () {
             if ($contents === false || substr($contents, 0, 5) !== '%PDF-') {
                 return new WP_Error('invalid_invoice_pdf', 'WP Overnight did not return a valid PDF.', ['status' => 502]);
             }
-            // Gebruik exact de bestandsnaam die WP Overnight zelf voor de
-            // factuur-PDF heeft aangemaakt in WooCommerce.
-            $filename = sanitize_file_name(basename($file));
-            if ($filename === '') {
-                $filename = 'invoice-' . absint($order->get_id()) . '.pdf';
+            // Gebruik het factuurnummer dat WP Overnight op de factuur toont.
+            // Supply Panel downloadt de PDF als FACTUUR-25.pdf, niet als invoice-289.pdf.
+            $invoice_number = method_exists($document, 'get_number')
+                ? trim((string) $document->get_number())
+                : '';
+            if ($invoice_number === '') {
+                return new WP_Error(
+                    'invoice_number_missing',
+                    'WP Overnight returned no invoice number.',
+                    ['status' => 502]
+                );
             }
+            $filename = 'FACTUUR-' . sanitize_file_name($invoice_number) . '.pdf';
             return new WP_REST_Response([
                 'pdf_base64' => base64_encode($contents),
                 'filename' => $filename,
