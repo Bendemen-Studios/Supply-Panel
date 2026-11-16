@@ -34,8 +34,9 @@ add_action('rest_api_init', function () {
             if ($contents === false || substr($contents, 0, 5) !== '%PDF-') {
                 return new WP_Error('invalid_invoice_pdf', 'WP Overnight did not return a valid PDF.', ['status' => 502]);
             }
-            // Gebruik het factuurnummer dat WP Overnight op de factuur toont.
-            // Supply Panel downloadt de PDF als FACTUUR-25.pdf, niet als invoice-289.pdf.
+            // Bouw de standaardnaam op basis van het WP Overnight-factuurnummer
+            // en voer daarna de officiële WP Overnight bestandsnaam-filter uit.
+            // Hierdoor worden ook custom filenames uit snippets/extensies toegepast.
             $invoice_number = method_exists($document, 'get_number')
                 ? trim((string) $document->get_number())
                 : '';
@@ -46,7 +47,19 @@ add_action('rest_api_init', function () {
                     ['status' => 502]
                 );
             }
-            $filename = 'FACTUUR-' . sanitize_file_name($invoice_number) . '.pdf';
+
+            $filename = 'invoice-' . $invoice_number . '.pdf';
+            $filename = apply_filters(
+                'wpo_wcpdf_filename',
+                $filename,
+                'invoice',
+                [absint($order->get_id())],
+                'download'
+            );
+            $filename = sanitize_file_name((string) $filename);
+            if ($filename === '') {
+                $filename = 'invoice-' . absint($order->get_id()) . '.pdf';
+            }
             return new WP_REST_Response([
                 'pdf_base64' => base64_encode($contents),
                 'filename' => $filename,
