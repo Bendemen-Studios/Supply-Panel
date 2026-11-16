@@ -86,7 +86,6 @@ function orderItems(orderId) { return db.prepare("SELECT product_name,quantity,u
 function displayOrderStatus(o) {
   if (o.workflow_status === "cancelled" || o.wc_status === "cancelled") return "Geannuleerd";
   if (["processing","completed"].includes(o.wc_status)) return "In behandeling";
-  if (o.wc_status === "order-started" || o.workflow_status === "started") return "Order gestart";
   return o.wc_status || o.status;
 }
 function orderCard(o) {
