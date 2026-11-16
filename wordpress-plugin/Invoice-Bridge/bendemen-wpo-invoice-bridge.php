@@ -3,6 +3,7 @@
  * Plugin Name: Bendemen WP Overnight Invoice Bridge
  * Description: Generates and returns WP Overnight PDF invoices to the authenticated Bendemen Supply Panel integration.
  * Version: 1.3.0
+ * Author: Bendemen
  */
 
 if (!defined('ABSPATH')) {
