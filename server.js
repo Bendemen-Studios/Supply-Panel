@@ -307,27 +307,29 @@ app.get("/register",(req,res)=>res.redirect("/login"));
 app.post("/register",(req,res)=>res.status(403).send("Accountregistratie is alleen mogelijk via beheer."));
 
 app.get("/email-login", async (req,res,next) => {
+  const loginMessage=(code)=>res.redirect(303,"/login?"+code+"=1");
   try {
     const token=String(req.query.token||"");
     const parts=token.split(".");
-    if(parts.length!==2||!process.env.SESSION_SECRET) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
+    if(parts.length!==2||!process.env.SESSION_SECRET) return loginMessage("link_invalid");
     const [encoded,signature]=parts;
     const expected=crypto.createHmac("sha256",process.env.SESSION_SECRET).update(encoded).digest("hex");
     const suppliedSignature=Buffer.from(signature,"utf8"),expectedSignature=Buffer.from(expected,"utf8");
-    if(suppliedSignature.length!==expectedSignature.length||!crypto.timingSafeEqual(suppliedSignature,expectedSignature)) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
+    if(suppliedSignature.length!==expectedSignature.length||!crypto.timingSafeEqual(suppliedSignature,expectedSignature)) return loginMessage("link_invalid");
     const payload=JSON.parse(Buffer.from(encoded,"base64url").toString("utf8"));
     const now=Math.floor(Date.now()/1000);
-    if(!payload.user_id||!payload.order_id||!payload.nonce||!Number.isInteger(payload.exp)||payload.exp<now||payload.exp>now+16*60) return res.status(401).send("Deze inloglink is ongeldig of verlopen. Vraag een nieuwe bestellingsmail aan.");
+    if(!Number.isInteger(payload.exp)||payload.exp<now) return loginMessage("link_expired");
+    if(!payload.user_id||!payload.order_id||!payload.nonce||payload.exp>now+5*24*60*60+60) return loginMessage("link_invalid");
     const order=db.prepare("SELECT id,user_id FROM orders WHERE id=? AND user_id=?").get(Number(payload.order_id),Number(payload.user_id));
     const user=db.prepare("SELECT id,name,email,role,active FROM users WHERE id=?").get(Number(payload.user_id));
-    if(!order||!user||Number(user.active)!==1||user.role!=="customer") return res.status(403).send("Deze bestelling of dit account is niet beschikbaar.");
+    if(!order||!user||Number(user.active)!==1||user.role!=="customer") return loginMessage("link_unavailable");
     const nonceHash=crypto.createHash("sha256").update(String(payload.nonce)).digest("hex");
     const inserted=db.prepare("INSERT OR IGNORE INTO email_sso_tokens (nonce_hash,user_id,order_id,expires_at) VALUES (?,?,?,?)")
-      .run(nonceHash,user.id,order.id,payload.exp?Number(payload.exp):0);
-    if(!inserted.changes) return res.status(401).send("Deze inloglink is al gebruikt. Vraag een nieuwe bestellingsmail aan.");
+      .run(nonceHash,user.id,order.id,payload.exp);
+    if(!inserted.changes) return loginMessage("link_used");
     const consumed=db.prepare("UPDATE email_sso_tokens SET used_at=? WHERE nonce_hash=? AND used_at IS NULL AND (expires_at=0 OR expires_at>=?)")
       .run(Date.now(),nonceHash,now);
-    if(!consumed.changes) return res.status(401).send("Deze inloglink is al gebruikt of verlopen. Vraag een nieuwe bestellingsmail aan.");
+    if(!consumed.changes) return loginMessage("link_expired");
     req.session.regenerate(err=>{
       if(err) return next(err);
       req.session.user={id:user.id,name:user.name,email:user.email,role:user.role};
@@ -337,14 +339,15 @@ app.get("/email-login", async (req,res,next) => {
       });
     });
   } catch(error) {
-    if(error instanceof SyntaxError) return res.status(401).send("Deze inloglink is ongeldig. Vraag een nieuwe bestellingsmail aan.");
+    if(error instanceof SyntaxError) return loginMessage("link_invalid");
     next(error);
   }
 });
 app.get("/login",(req,res)=>{
   if(req.session.user)return res.redirect("/");
+  const linkMessage=req.query.link_expired?'<div class="alert">Deze bestellingslink is verlopen (5 dagen geldig). Log hieronder in met je account of vraag een nieuwe bestellingsmail aan.</div>':req.query.link_used?'<div class="alert">Deze bestellingslink is al gebruikt. Log hieronder in of vraag een nieuwe bestellingsmail aan.</div>':req.query.link_invalid?'<div class="alert">Deze bestellingslink is ongeldig. Log hieronder in of vraag een nieuwe bestellingsmail aan.</div>':req.query.link_unavailable?'<div class="alert">Deze bestelling of dit account is niet meer beschikbaar. Log hieronder in of neem contact op met support.</div>':"";
   const error=req.query.error?'<div class="alert">Inloggen is niet gelukt. Controleer je e-mailadres en wachtwoord.</div>':"";
-  res.send(page(req,"Inloggen",`<section class="auth-card"><div class="eyebrow">BENDEMEN STUDIOS</div><h1>Welkom terug.</h1><p class="sub">Log in met je e-mailadres en wachtwoord om je account te beheren.</p>${req.query.disabled?'<div class="alert">Je Supply Panel-account is uitgeschakeld. Je WooCommerce-account op de webshop blijft gewoon werken.</div>':""}${error}<form method="post" action="/login" class="stack"><label>E-mailadres<input name="email" type="email" autocomplete="username" required></label><label>Wachtwoord<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">Inloggen <span>→</span></button></form></section>`));
+  res.send(page(req,"Inloggen",`<section class="auth-card"><div class="eyebrow">BENDEMEN STUDIOS</div><h1>Welkom terug.</h1><p class="sub">Log in met je e-mailadres en wachtwoord om je account te beheren.</p>${req.query.disabled?'<div class="alert">Je Supply Panel-account is uitgeschakeld. Je WooCommerce-account op de webshop blijft gewoon werken.</div>':""}${linkMessage}${error}<form method="post" action="/login" class="stack"><label>E-mailadres<input name="email" type="email" autocomplete="username" required></label><label>Wachtwoord<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">Inloggen <span>→</span></button></form></section>`));
 });
 app.post("/login",loginLimiter,async(req,res)=>{
   const email=String(req.body.email||"").trim().toLowerCase();
