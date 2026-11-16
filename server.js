@@ -604,9 +604,9 @@ app.get("/admin/orders/new",requireAuth,requireAdmin,(req,res)=>{
  const customers=db.prepare("SELECT id,name,email FROM users WHERE role='customer' AND active=1 ORDER BY name").all();
  const products=db.prepare("SELECT id,name,sku,price_cents FROM products WHERE active=1 ORDER BY name").all();
  const customerOptions=customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+' · '+esc(c.email)+'</option>').join("");
- const productRows=products.map(p=>'<tr><td><label style="display:flex;align-items:center;gap:10px"><input type="checkbox" name="product_ids" value="'+p.id+'" style="width:auto;margin:0"><span>'+esc(p.name)+(p.sku?' · '+esc(p.sku):'')+'</span></label></td><td>'+money(p.price_cents)+'</td><td><input type="number" name="quantity_'+p.id+'" min="1" max="999" value="1" style="max-width:90px" aria-label="Aantal '+esc(p.name)+'"></td></tr>').join("");
+ const productRows=products.map(p=>'<tr><td><label style="display:flex;align-items:center;gap:10px"><input type="checkbox" name="product_ids" value="'+p.id+'" style="width:auto;margin:0"><span>'+esc(p.name)+(p.sku?' · '+esc(p.sku):'')+'</span></label></td><td><input type="text" name="price_'+p.id+'" inputmode="decimal" value="'+(p.price_cents/100).toFixed(2).replace(".",",")+'" style="max-width:120px" aria-label="Prijs per stuk voor '+esc(p.name)+'"></td><td><input type="number" name="quantity_'+p.id+'" min="1" max="999" value="1" style="max-width:90px" aria-label="Aantal '+esc(p.name)+'"></td></tr>').join("");
  const body='<a class="back" href="/admin/orders">← Orderoverzicht</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Supply order aanmaken</h1><p>Maak handmatig een nieuwe Supply-bestelling aan voor een klant. Het SUPPLY-ordernummer wordt automatisch toegewezen zodra je de bestelling aanmaakt; je hoeft dit niet zelf in te vullen.</p></div>'+
- (customers.length?'<form method="post" action="/admin/orders/new" class="stack"><div class="panel"><label>Klant<select name="user_id" required><option value="">Selecteer een klant</option>'+customerOptions+'</select></label></div><div class="panel"><h2>Producten</h2><p class="hint">Selecteer één of meer producten en stel per product het aantal in.</p><div class="table-wrap"><table><thead><tr><th>Product</th><th>Prijs per stuk</th><th>Aantal</th></tr></thead><tbody>'+productRows+'</tbody></table></div></div><div class="panel"><label>Opmerking voor op de factuur<textarea name="notes" rows="3" maxlength="2000" placeholder="Optionele factuuropmerking"></textarea></label><button class="primary">Supply order aanmaken</button></div></form>':'<div class="panel"><p>Er zijn geen actieve klanten beschikbaar. Activeer of voeg eerst een klant toe.</p></div>');
+ (customers.length?'<form method="post" action="/admin/orders/new" class="stack"><div class="panel"><label>Klant<select name="user_id" required><option value="">Selecteer een klant</option>'+customerOptions+'</select></label></div><div class="panel"><h2>Producten</h2><p class="hint">Selecteer één of meer producten en pas per product de prijs en het aantal aan. Ook producten met een standaardprijs van € 0,00 kun je hier een prijs geven.</p><div class="table-wrap"><table><thead><tr><th>Product</th><th>Prijs per stuk (€)</th><th>Aantal</th></tr></thead><tbody>'+productRows+'</tbody></table></div></div><div class="panel"><label>Opmerking voor op de factuur<textarea name="notes" rows="3" maxlength="2000" placeholder="Optionele factuuropmerking"></textarea></label><button class="primary">Supply order aanmaken</button></div></form>':'<div class="panel"><p>Er zijn geen actieve klanten beschikbaar. Activeer of voeg eerst een klant toe.</p></div>');
  res.send(page(req,"Supply order aanmaken",body));
 });
 app.post("/admin/orders/new",requireAuth,requireAdmin,(req,res)=>{
@@ -620,8 +620,10 @@ app.post("/admin/orders/new",requireAuth,requireAdmin,(req,res)=>{
  const lines=[];
  for(const product of products){
   const quantity=Number(req.body["quantity_"+product.id]||1);
+  const price=moneyInput(req.body["price_"+product.id]??String((product.price_cents/100).toFixed(2)));
   if(!Number.isInteger(quantity)||quantity<1||quantity>999)return res.status(400).send("Controleer de aantallen. Gebruik minimaal 1 en maximaal 999.");
-  lines.push({product_id:String(product.id),product_name:product.name,quantity,unit_price_cents:product.price_cents});
+  if(!Number.isSafeInteger(price)||price<0||price>100000000)return res.status(400).send("Controleer de productprijzen. Gebruik een bedrag tussen € 0,00 en € 1.000.000,00.");
+  lines.push({product_id:String(product.id),product_name:product.name,quantity,unit_price_cents:price});
  }
  const notes=String(req.body.notes||"").trim().slice(0,2000);
  try{
