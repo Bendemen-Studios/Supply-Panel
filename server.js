@@ -82,7 +82,7 @@ app.use((req,res,next)=>{
   next();
 });
 function moneyInput(value) { return Math.round(Number(String(value).replace(",", ".")) * 100); }
-function orderItems(orderId) { return db.prepare("SELECT product_name,quantity,unit_price_cents FROM order_items WHERE order_id=?").all(orderId); }
+function orderItems(orderId) { return db.prepare("SELECT product_name,quantity,unit_price_cents,meta_data FROM order_items WHERE order_id=?").all(orderId); }
 function displayOrderStatus(o) {
   if (o.workflow_status === "cancelled" || o.wc_status === "cancelled") return "Geannuleerd";
   if (["processing","completed"].includes(o.wc_status)) return "In behandeling";
@@ -453,7 +453,7 @@ app.get("/orders/:id",requireAuth,async(req,res)=>{
   if(!o)return res.status(404).send(page(req,"Niet gevonden","<h1>Bestelling niet gevonden</h1>"));
   try{await woo.refreshWooOrder(id);}catch(e){console.error("Woo status refresh:",e.message);}
   const fresh=db.prepare("SELECT * FROM orders WHERE id=?").get(id),items=orderItems(id);
-  const rows=items.map(i=>`<tr><td>${esc(i.product_name)}</td><td>${i.quantity}</td><td>${money(i.unit_price_cents)}</td><td>${money(i.quantity*i.unit_price_cents)}</td></tr>`).join("");
+  const rows=items.map(i=>{let meta=[];try{meta=JSON.parse(i.meta_data||"[]");}catch(_){meta=[];}const detail=meta.filter(m=>m&&typeof m.key==="string"&&!m.key.startsWith("_")).map(m=>`<small class="hint">${esc(m.key)}: ${esc(typeof m.value==="string"?m.value:JSON.stringify(m.value))}</small>`).join("");return `<tr><td><strong>${esc(i.product_name)}</strong>${detail}</td><td>${i.quantity}</td><td>${money(i.unit_price_cents)}</td><td>${money(i.quantity*i.unit_price_cents)}</td></tr>`;}).join("");
   const canCancel=!fresh.recurring_order_id&&fresh.workflow_status==="started"&&!["processing","completed","cancelled","refunded"].includes(fresh.wc_status);
   const payBlock=fresh.payment_url&&!["processing","completed","refunded","cancelled"].includes(fresh.wc_status)?`<div class="payment-box"><div><strong>Deze bestelling staat nog open</strong><p>Betaal veilig via de betaalpagina van Bendemen Studios.</p></div><a class="primary" href="/orders/${id}/pay">Nu betalen <span>→</span></a></div>`:(fresh.wc_status?`<p class="hint">WooCommerce-status: ${esc(displayOrderStatus(fresh))}</p>`:'<p class="hint">De WooCommerce-betaallink verschijnt zodra de winkelkoppeling is ingesteld.</p>');
   const cancelBlock=canCancel?`<form method="post" action="/orders/${id}/cancel" class="cancel-box"><div><strong>Bestelling annuleren</strong><p>Dit kan zolang de bestelling nog niet in behandeling is genomen.</p></div><button class="danger">Bestelling annuleren</button></form>`:"";
