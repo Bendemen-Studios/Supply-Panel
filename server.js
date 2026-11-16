@@ -492,7 +492,7 @@ app.get("/orders/:id/pdf",requireAuth,async(req,res)=>{
   try{
     const pdf=await woo.getInvoicePdf(order.wc_order_id);
     res.setHeader("Content-Type","application/pdf");
-    res.setHeader("Content-Disposition",`attachment; filename="factuur-SUPPLY-${order.local_order_no||id}.pdf"`);
+    res.setHeader("Content-Disposition",`attachment; filename="factuur-${pdf.invoiceNumber||order.wc_order_number||order.wc_order_id}.pdf"`);
     res.setHeader("Content-Length",pdf.length);
     res.send(pdf);
   }catch(err){
@@ -507,7 +507,7 @@ app.get("/orders/:id/invoice",requireAuth,async(req,res)=>{
   try{
     const pdf=await woo.getInvoicePdf(order.wc_order_id);
     res.setHeader("Content-Type","application/pdf");
-    res.setHeader("Content-Disposition",`inline; filename="factuur-SUPPLY-${order.local_order_no||id}.pdf"`);
+    res.setHeader("Content-Disposition",`inline; filename="factuur-${pdf.invoiceNumber||order.wc_order_number||order.wc_order_id}.pdf"`);
     res.setHeader("Cache-Control","private, no-store");
     res.send(pdf);
   }catch(err){
