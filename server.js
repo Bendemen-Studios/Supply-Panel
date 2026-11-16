@@ -162,12 +162,12 @@ async function syncDeletedWooOrders(){
      db.prepare("UPDATE orders SET wc_order_number=?,wc_status=?,total_cents=?,currency=? WHERE id=? AND wc_order_id=?")
       .run(wcOrder.number!=null?String(wcOrder.number):row.wc_order_id,String(wcOrder.status||"pending"),Math.round(Number(wcOrder.total||0)*100),String(wcOrder.currency||"EUR"),row.id,row.wc_order_id);
      db.prepare("DELETE FROM order_items WHERE order_id=?").run(row.id);
-     const insert=db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents) VALUES (?,?,?,?,?)");
+     const insert=db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents,meta_data) VALUES (?,?,?,?,?,?)");
      for(const item of items){
       const quantity=Math.max(1,Math.trunc(Number(item.quantity)||1));
       const lineTotal=Number(item.total);
       const unitPriceCents=Number.isFinite(lineTotal)?Math.round(lineTotal*100/quantity):0;
-      insert.run(row.id,item.product_id?String(item.product_id):null,String(item.name||"WooCommerce regel"),quantity,unitPriceCents);
+      insert.run(row.id,item.product_id?String(item.product_id):null,String(item.name||"WooCommerce regel"),quantity,unitPriceCents,JSON.stringify(Array.isArray(item.meta_data)?item.meta_data:[]));
      }
     });
     tx();stats.updated++;
@@ -748,8 +748,8 @@ app.post("/admin/products/sync",requireAuth,requireAdmin,async(req,res)=>{
  try{
   let pageNo=1,count=0;
   while(true){const list=await woo.listProducts(pageNo,100);if(!list.length)break;
-   const upsert=db.prepare("INSERT INTO products (wc_product_id,name,sku,description,price_cents,product_url,image_url,source,active,updated_at) VALUES (?,?,?,?,?,?,?,'woocommerce',1,CURRENT_TIMESTAMP) ON CONFLICT(wc_product_id) DO UPDATE SET name=excluded.name,sku=excluded.sku,description=excluded.description,price_cents=excluded.price_cents,product_url=excluded.product_url,image_url=excluded.image_url,active=1,updated_at=CURRENT_TIMESTAMP");
-   const tx=db.transaction(items=>{for(const p of items){const cents=Math.round(Number(p.price||0)*100);upsert.run(String(p.id),p.name||'Product',p.sku||null,p.description||null,cents,p.permalink||null,p.images&&p.images[0]?p.images[0].src:null);}});
+   const upsert=db.prepare("INSERT INTO products (wc_product_id,name,sku,description,price_cents,product_url,image_url,meta_data,source,active,updated_at) VALUES (?,?,?,?,?,?,?,?,'woocommerce',1,CURRENT_TIMESTAMP) ON CONFLICT(wc_product_id) DO UPDATE SET name=excluded.name,sku=excluded.sku,description=excluded.description,price_cents=excluded.price_cents,product_url=excluded.product_url,image_url=excluded.image_url,meta_data=excluded.meta_data,active=1,updated_at=CURRENT_TIMESTAMP");
+   const tx=db.transaction(items=>{for(const p of items){const cents=Math.round(Number(p.price||0)*100);upsert.run(String(p.id),p.name||'Product',p.sku||null,p.description||null,cents,p.permalink||null,p.images&&p.images[0]?p.images[0].src:null,JSON.stringify(Array.isArray(p.meta_data)?p.meta_data:[]));}});
    tx(list);count+=list.length;if(list.length<100)break;pageNo++;
   }
   res.redirect("/admin/products?sync="+count);
@@ -774,14 +774,14 @@ app.post("/admin/orders/:id/custom-item",requireAuth,requireAdmin,(req,res)=>{
  const id=Number(req.params.id),name=String(req.body.name||"").trim().slice(0,180),price=moneyInput(req.body.price),qty=Number(req.body.quantity);
  const order=db.prepare("SELECT id FROM orders WHERE id=?").get(id);
  if(!order||!name||price===null||price<0||!Number.isSafeInteger(price)||!Number.isInteger(qty)||qty<1||qty>999)return res.status(400).send("Ongeldige maatwerkregel. Controleer omschrijving, prijs en aantal.");
- db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents) VALUES (?,NULL,?,?,?)").run(id,name,qty,price);
+ db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents,meta_data) VALUES (?,NULL,?,?,?,'[]')").run(id,name,qty,price);
  db.prepare("UPDATE orders SET total_cents=(SELECT COALESCE(SUM(quantity*unit_price_cents),0) FROM order_items WHERE order_id=?) WHERE id=?").run(id,id);
  res.redirect("/admin/orders/"+id+"/products");
 });
 app.post("/admin/orders/:id/products",requireAuth,requireAdmin,(req,res)=>{
  const id=Number(req.params.id),product=db.prepare("SELECT * FROM products WHERE id=? AND active=1").get(Number(req.body.product_id)),qty=Number(req.body.quantity);
  const order=db.prepare("SELECT id FROM orders WHERE id=?").get(id);if(!order||!product||!Number.isInteger(qty)||qty<1||qty>999)return res.status(400).send("Ongeldige bestelling, productkeuze of aantal.");
- db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents) VALUES (?,?,?,?,?)").run(id,product.wc_product_id||("local:"+String(product.id)),product.name,qty,product.price_cents);
+ db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents,meta_data) VALUES (?,?,?,?,?,?)").run(id,product.wc_product_id||("local:"+String(product.id)),product.name,qty,product.price_cents,product.meta_data||"[]");
  db.prepare("UPDATE orders SET total_cents=(SELECT COALESCE(SUM(quantity*unit_price_cents),0) FROM order_items WHERE order_id=?) WHERE id=?").run(id,id);
  res.redirect("/admin/orders/"+id+"/products");
 });
