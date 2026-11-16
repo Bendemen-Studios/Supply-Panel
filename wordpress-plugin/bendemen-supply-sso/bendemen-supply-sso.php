@@ -3,7 +3,7 @@
  * Plugin Name: Bendemen Supply Panel SSO
  * Description: Beveiligde eenmalige login vanuit Bendemen Supply Panel naar de WooCommerce-betaalpagina.
  * Version: 1.1.0
- * Author: Bendemen Studios
+ * Author: Bendemen
  */
 if (!defined('ABSPATH')) exit;
 
