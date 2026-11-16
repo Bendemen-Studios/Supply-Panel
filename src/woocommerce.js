@@ -15,6 +15,7 @@ async function request(endpoint,method="GET",data){
 async function listProducts(page=1,perPage=100){return request(`products?status=any&per_page=${Math.min(100,perPage)}&page=${page}`);}
 async function searchCustomers(query,page=1){return request(`customers?search=${encodeURIComponent(query)}&per_page=30&page=${page}`);}
 async function getCustomer(id){return request(`customers/${encodeURIComponent(id)}`);}
+async function updateWooCustomerBilling(id,billing){return request(`customers/${encodeURIComponent(id)}`,"PUT",{billing});}
 async function createExpenseOrder(expense){
  const payload={
   status:"on-hold",
@@ -41,7 +42,7 @@ async function createWooOrder(order,items){
   status:"pending",
   set_paid:false,
   customer_id:order.wc_customer_id?Number(order.wc_customer_id):0,
-  billing:{email:order.customer_email,first_name:order.customer_name},
+  billing:{email:order.customer_email,first_name:order.billing_first_name||order.customer_name,last_name:order.billing_last_name||"",company:order.billing_company||"",address_1:order.billing_address_1||"",address_2:order.billing_address_2||"",postcode:order.billing_postcode||"",city:order.billing_city||"",state:order.billing_state||"",country:order.billing_country||"NL",phone:order.billing_phone||""},
   line_items,
   fee_lines,
   meta_data:[{key:"_bendemen_supply_panel_order",value:"1"},{key:"_bendemen_local_order_id",value:String(order.id)},{key:"_wcpdf_invoice_notes",value:String(order.notes||"")}]
