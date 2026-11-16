@@ -42,10 +42,9 @@ async function createWooOrder(order,items){
   set_paid:false,
   customer_id:order.wc_customer_id?Number(order.wc_customer_id):0,
   billing:{email:order.customer_email,first_name:order.customer_name},
-  customer_note:String(order.notes||""),
   line_items,
   fee_lines,
-  meta_data:[{key:"_bendemen_supply_panel_order",value:"1"},{key:"_bendemen_local_order_id",value:String(order.id)}]
+  meta_data:[{key:"_bendemen_supply_panel_order",value:"1"},{key:"_bendemen_local_order_id",value:String(order.id)},{key:"_wcpdf_invoice_notes",value:String(order.notes||"")}]
  };
  return request("orders","POST",payload);
 }
@@ -66,7 +65,7 @@ async function updateWooOrder(wcOrderId,items){
  }
  return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{line_items,fee_lines});
 }
-async function updateWooOrderNote(wcOrderId,notes){return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{customer_note:String(notes||"")});}
+async function updateWooOrderNote(wcOrderId,notes){return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{meta_data:[{key:"_wcpdf_invoice_notes",value:String(notes||"")}]});}
 async function createWooSubscription(subscription,items){
  const line_items=[],fee_lines=[];
  for(const item of items){
