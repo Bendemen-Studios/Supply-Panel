@@ -631,7 +631,7 @@ app.post("/admin/orders/new",requireAuth,requireAdmin,async(req,res)=>{
  const raw=req.body.product_ids||[],ids=(Array.isArray(raw)?raw:[raw]).map(Number);
  if(!ids.length||ids.some(id=>!Number.isSafeInteger(id)||id<1))return res.status(400).send("Voeg minimaal één geldig product toe aan het mandje.");
  const uniqueIds=[...new Set(ids)],placeholders=uniqueIds.map(()=>"?").join(",");
- const products=db.prepare("SELECT id,name FROM products WHERE active=1 AND id IN ("+placeholders+")").all(...uniqueIds);
+ const products=db.prepare("SELECT id,wc_product_id,name,meta_data FROM products WHERE active=1 AND id IN ("+placeholders+")").all(...uniqueIds);
  if(products.length!==uniqueIds.length)return res.status(400).send("Een of meer geselecteerde producten zijn niet meer actief.");
  const productMap=new Map(products.map(p=>[p.id,p])),lines=[];
  for(let index=0;index<ids.length;index++){
@@ -639,7 +639,7 @@ app.post("/admin/orders/new",requireAuth,requireAdmin,async(req,res)=>{
   if(!product)return res.status(400).send("Een geselecteerd product is niet meer actief.");
   if(!Number.isInteger(quantity)||quantity<1||quantity>999)return res.status(400).send("Controleer de aantallen. Gebruik minimaal 1 en maximaal 999.");
   if(!Number.isSafeInteger(price)||price<0||price>100000000)return res.status(400).send("Controleer de productprijzen. Gebruik een bedrag tussen € 0,00 en € 1.000.000,00.");
-  lines.push({product_id:String(product.id),product_name:product.name,quantity,unit_price_cents:price});
+  lines.push({product_id:product.wc_product_id?String(product.wc_product_id):"local:"+String(product.id),product_name:product.name,quantity,unit_price_cents:price,meta_data:product.meta_data||"[]"});
  }
  const notes=String(req.body.notes||"").trim().slice(0,2000);
  try{
