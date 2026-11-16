@@ -27,13 +27,17 @@ async function createExpenseOrder(expense){
  };
  return request("orders","POST",payload);
 }
+function normalizeLineMeta(raw){
+ let values=[];try{values=Array.isArray(raw)?raw:JSON.parse(raw||"[]");}catch(_){values=[];}
+ return values.filter(x=>x&&typeof x.key==="string"&&!x.key.startsWith("_")&&x.value!==undefined).map(x=>({key:x.key,value:x.value}));
+}
 async function createWooOrder(order,items){
  const line_items=[],fee_lines=[];
  for(const item of items){
   const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
   const wcProductId=item.product_id&&/^\d+$/.test(String(item.product_id))?String(item.product_id):null;
   if(wcProductId){
-   line_items.push({product_id:Number(wcProductId),quantity:item.quantity,subtotal:total,total});
+   line_items.push({product_id:Number(wcProductId),quantity:item.quantity,subtotal:total,total,meta_data:normalizeLineMeta(item.meta_data)});
   }else{
    fee_lines.push({name:item.quantity>1?`${item.product_name} (aantal: ${item.quantity})`:item.product_name,tax_status:"none",total});
   }
@@ -57,7 +61,7 @@ async function updateWooOrder(wcOrderId,items){
   const wcProductId=item.product_id&&/^\d+$/.test(String(item.product_id))?String(item.product_id):null;
   if(wcProductId){
    const match=(existing.line_items||[]).find(line=>String(line.product_id)===wcProductId);
-   line_items.push({...(match?{id:match.id}:{}),product_id:Number(wcProductId),quantity:item.quantity,subtotal:total,total});
+   line_items.push({...(match?{id:match.id}:{}),product_id:Number(wcProductId),quantity:item.quantity,subtotal:total,total,meta_data:normalizeLineMeta(item.meta_data)});
   }else{
    const name=item.quantity>1?`${item.product_name} (aantal: ${item.quantity})`:item.product_name;
    const match=(existing.fee_lines||[]).find(line=>line.name===name);
