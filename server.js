@@ -102,6 +102,19 @@ async function syncWooOrder(orderId) {
   try {
     const order=db.prepare("SELECT o.*,u.wc_customer_id,u.email customer_email,u.name customer_name,u.billing_first_name,u.billing_last_name,u.billing_company,u.billing_address_1,u.billing_address_2,u.billing_postcode,u.billing_city,u.billing_state,u.billing_country,u.billing_phone FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=?").get(orderId);
     if(!order)throw new Error("Lokale bestelling niet gevonden.");
+    // Repair legacy order rows: older versions stored the local products.id as
+    // WooCommerce product_id and did not copy the catalog product metadata.
+    const legacyItems=db.prepare("SELECT id,product_id,product_name,meta_data FROM order_items WHERE order_id=?").all(orderId);
+    const repair=db.prepare("UPDATE order_items SET product_id=?,meta_data=? WHERE id=?");
+    for(const item of legacyItems){
+      if(!item.product_id||!/^\\d+$/.test(String(item.product_id)))continue;
+      const catalog=db.prepare("SELECT id,wc_product_id,meta_data FROM products WHERE name=? ORDER BY id LIMIT 1").get(item.product_name);
+      if(catalog&&catalog.wc_product_id&&String(item.product_id)===String(catalog.id)){
+        let meta=String(item.meta_data||"[]");
+        if(meta==="[]"&&catalog.meta_data)meta=catalog.meta_data;
+        repair.run(String(catalog.wc_product_id),meta,item.id);
+      }
+    }
     const items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
     const result=order.wc_order_id?await woo.updateWooOrder(order.wc_order_id,items):await woo.createWooOrder(order,items);
     if(result?.id){
@@ -490,7 +503,10 @@ app.get("/orders/:id/pdf",requireAuth,async(req,res)=>{
   if(!order||!order.wc_order_id)return res.status(404).send("WooCommerce-factuur niet gevonden.");
   if(!["pending","on-hold","processing","completed","refunded"].includes(order.wc_status))return res.status(409).send("Voor deze bestelling is nog geen factuur beschikbaar.");
   try{
-    const pdf=await woo.getInvoicePdf(order.wc_order_id);
+    // Sync first so legacy product IDs/meta are repaired before WP Overnight renders the PDF.
+    await syncWooOrder(id);
+    const fresh=db.prepare("SELECT wc_order_id FROM orders WHERE id=? AND user_id=?").get(id,req.session.user.id);
+    const pdf=await woo.getInvoicePdf(fresh?.wc_order_id||order.wc_order_id);
     res.setHeader("Content-Type","application/pdf");
     res.setHeader("Content-Disposition",`attachment; filename="${pdf.filename}"`);
     res.setHeader("Content-Length",pdf.length);
