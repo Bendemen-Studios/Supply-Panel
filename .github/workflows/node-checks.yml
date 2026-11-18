@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - name: Report dependency security audit
+        run: npm audit --json || true
       - name: Syntax-check application and migration scripts
         run: |
           find src scripts -name '*.js' -print0 | xargs -0 -n1 node --check
