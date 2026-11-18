@@ -101,7 +101,7 @@ app.use((req,res,next)=>{
   next();
 });
 function moneyInput(value) { return Math.round(Number(String(value).replace(",", ".")) * 100); }
-function orderItems(orderId) { return db.prepare("SELECT product_name,quantity,unit_price_cents,meta_data FROM order_items WHERE order_id=?").all(orderId); }
+function orderItems(orderId) { return db.prepare("SELECT product_id,product_name,quantity,unit_price_cents,meta_data FROM order_items WHERE order_id=?").all(orderId); }
 function discardOrderUploads(req) {
  for(const file of req.files||[])if(file&&file.path)fs.unlink(file.path,()=>{});
 }
@@ -258,8 +258,8 @@ function createOrder(userId, lines, sourceOrderId=null, notes="", recurringOrder
   const tx=db.transaction(()=>{
     const nextNo=nextFreeSupplyOrderNo();
     const order=db.prepare("INSERT INTO orders (user_id,status,total_cents,source_order_id,notes,recurring_order_id,local_order_no,show_in_history) VALUES (?,'Nieuw',?,?,?,?,?,1)").run(userId,total,sourceOrderId,notes,recurringOrderId,nextNo);
-    const insert=db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents) VALUES (?,?,?,?,?)");
-    for(const x of lines) insert.run(order.lastInsertRowid,x.product_id||null,x.product_name,x.quantity,x.unit_price_cents);
+    const insert=db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents,meta_data) VALUES (?,?,?,?,?,?)");
+    for(const x of lines) insert.run(order.lastInsertRowid,x.product_id||null,x.product_name,x.quantity,x.unit_price_cents,typeof x.meta_data==="string"?x.meta_data:JSON.stringify(x.meta_data||[]));
     const insertFee=db.prepare("INSERT INTO order_fee_lines (order_id,name,amount_cents) VALUES (?,?,?)");
     for(const fee of fees) insertFee.run(order.lastInsertRowid,fee.name,fee.amount_cents);
     return Number(order.lastInsertRowid);
@@ -605,7 +605,7 @@ app.post("/orders/:id/reorder",requireAuth,async(req,res)=>{
   if(!order)return res.status(404).send("Bestelling niet gevonden.");
   if(order.recurring_order_id)return res.status(403).send("Abonnementsbestellingen kunnen niet opnieuw besteld worden.");
   if(order.allow_reorder===0)return res.status(403).send("Opnieuw bestellen is voor deze bestelling uitgeschakeld.");
-  const lines=orderItems(id).map(x=>({product_name:x.product_name,quantity:x.quantity,unit_price_cents:x.unit_price_cents}));
+  const lines=orderItems(id).map(x=>({product_id:x.product_id,product_name:x.product_name,quantity:x.quantity,unit_price_cents:x.unit_price_cents,meta_data:x.meta_data||"[]"}));
   const fees=orderFeeLines(id).map(x=>({name:x.name,amount_cents:x.amount_cents}));
   const notes=String(req.body.notes||"").trim().slice(0,2000);
   try{const newId=createOrder(req.session.user.id,lines,id,notes||"Herbestelling",null,fees);queueOrderIntegrations(newId);res.redirect(`/orders/${newId}`);}catch(err){console.error(err);res.status(500).send("Herbestelling maken is mislukt.");}
@@ -814,7 +814,7 @@ app.post("/admin/customers/:id/reorder",requireAuth,requireAdmin,async(req,res)=
  const placeholders=ids.map(()=>"?").join(",");
  const selected=db.prepare("SELECT id FROM orders WHERE user_id=? AND id IN ("+placeholders+")").all(customerId,...ids);
  if(selected.length!==ids.length)return res.status(400).send("Een of meer geselecteerde orders horen niet bij deze klant.");
- const lines=ids.flatMap(id=>orderItems(id).map(x=>({product_name:x.product_name,quantity:x.quantity,unit_price_cents:x.unit_price_cents})));
+ const lines=ids.flatMap(id=>orderItems(id).map(x=>({product_id:x.product_id,product_name:x.product_name,quantity:x.quantity,unit_price_cents:x.unit_price_cents,meta_data:x.meta_data||"[]"})));
  if(!lines.length)return res.status(400).send("De geselecteerde orders bevatten geen orderregels.");
  const fees=ids.flatMap(id=>orderFeeLines(id).map(x=>({name:x.name,amount_cents:x.amount_cents})));
  const notes=String(req.body.notes||"").trim().slice(0,2000)||"Herbestelling op verzoek van beheer";
