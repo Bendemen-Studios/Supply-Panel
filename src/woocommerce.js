@@ -31,7 +31,7 @@ function normalizeLineMeta(raw){
  let values=[];try{values=Array.isArray(raw)?raw:JSON.parse(raw||"[]");}catch(_){values=[];}
  return values.filter(x=>x&&typeof x.key==="string"&&!x.key.startsWith("_")&&x.value!==undefined).map(x=>({key:x.key,value:x.value}));
 }
-async function createWooOrder(order,items){
+async function createWooOrder(order,items,fees=[]){
  const line_items=[],fee_lines=[];
  for(const item of items){
   const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
@@ -42,6 +42,7 @@ async function createWooOrder(order,items){
    fee_lines.push({name:item.quantity>1?`${item.product_name} (aantal: ${item.quantity})`:item.product_name,tax_status:"none",total});
   }
  }
+ for(const fee of fees)fee_lines.push({name:fee.name,tax_status:"none",total:(fee.amount_cents/100).toFixed(2)});
  const payload={
   status:"pending",
   set_paid:false,
@@ -53,7 +54,7 @@ async function createWooOrder(order,items){
  };
  return request("orders","POST",payload);
 }
-async function updateWooOrder(wcOrderId,items){
+async function updateWooOrder(wcOrderId,items,fees=[]){
  const existing=await request(`orders/${encodeURIComponent(wcOrderId)}`);
  const line_items=[],fee_lines=[];
  for(const item of items){
@@ -67,6 +68,10 @@ async function updateWooOrder(wcOrderId,items){
    const match=(existing.fee_lines||[]).find(line=>line.name===name);
    fee_lines.push({...(match?{id:match.id}:{}),name,tax_status:"none",total});
   }
+ }
+ for(const fee of fees){
+  const match=(existing.fee_lines||[]).find(line=>line.name===fee.name&&!fee_lines.some(x=>x.id===line.id));
+  fee_lines.push({...(match?{id:match.id}:{}),name:fee.name,tax_status:"none",total:(fee.amount_cents/100).toFixed(2)});
  }
  return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{line_items,fee_lines});
 }
