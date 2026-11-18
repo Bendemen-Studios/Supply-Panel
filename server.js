@@ -189,7 +189,7 @@ async function syncDeletedWooOrders(){
    stats.checked++;
    try{
     const wcOrder=await woo.getOrder(row.wc_order_id);
-    const items=[...(Array.isArray(wcOrder.line_items)?wcOrder.line_items:[]),...(Array.isArray(wcOrder.fee_lines)?wcOrder.fee_lines:[])];
+    const items=Array.isArray(wcOrder.line_items)?wcOrder.line_items:[];
     // WooCommerce kan bij een prijsupdate de lokale productomschrijving of
     // zichtbare configuratiemeta niet terugsturen. Bewaar die gegevens dan
     // vanuit de bestaande orderregel in plaats van ze leeg te synchroniseren.
@@ -199,6 +199,12 @@ async function syncDeletedWooOrders(){
      db.prepare("UPDATE orders SET wc_order_number=?,wc_status=?,total_cents=?,currency=? WHERE id=? AND wc_order_id=?")
       .run(wcOrder.number!=null?String(wcOrder.number):row.wc_order_id,String(wcOrder.status||"pending"),Math.round(Number(wcOrder.total||0)*100),String(wcOrder.currency||"EUR"),row.id,row.wc_order_id);
      db.prepare("DELETE FROM order_items WHERE order_id=?").run(row.id);
+     db.prepare("DELETE FROM order_fee_lines WHERE order_id=?").run(row.id);
+     const insertFee=db.prepare("INSERT INTO order_fee_lines (order_id,name,amount_cents) VALUES (?,?,?)");
+     for(const fee of (Array.isArray(wcOrder.fee_lines)?wcOrder.fee_lines:[])){
+      const amount=Number(fee.total);
+      insertFee.run(row.id,String(fee.name||"Extra kosten"),Number.isFinite(amount)?Math.round(amount*100):0);
+     }
      const insert=db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents,meta_data) VALUES (?,?,?,?,?,?)");
      for(const item of items){
       const quantity=Math.max(1,Math.trunc(Number(item.quantity)||1));
