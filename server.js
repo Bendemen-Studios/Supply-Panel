@@ -117,7 +117,7 @@ function displayOrderStatus(o) {
 }
 function orderCard(o) {
   const payment = o.payment_url && !["processing","completed","refunded","cancelled"].includes(o.wc_status) ? `<a class="textlink" href="/orders/${o.id}/pay">Betalen →</a>` : "";
-  return `<div class="order-row"><div><strong>${esc(o.order_number)}</strong><small>WooCommerce: ${esc(o.wc_order_number||"Nog niet gekoppeld")}</small><small>${esc(o.date)}</small></div><div class="order-products">${esc(o.summary || "Geen orderregels")}</div><div><span class="status">${esc(displayOrderStatus(o))}</span></div><strong>${money(o.total_cents)}</strong><div class="row-actions"><a class="textlink" href="/orders/${o.id}">Bekijken →</a>${payment}</div></div>`;
+  return `<div class="order-row"><div><strong>${esc(o.order_number)}</strong><small>WooCommerce: ${esc(o.wc_order_number||"Nog niet gekoppeld")}</small><small>${esc(o.date)}</small></div><div class="order-products">${esc(o.summary || "Geen orderregels")}</div><div><span class="status">${esc(displayOrderStatus(o))}</span></div><strong>${money(fresh.total_cents)}</strong><div class="row-actions"><a class="textlink" href="/orders/${o.id}">Bekijken →</a>${payment}</div></div>`;
 }
 function getOrders(userId, limit = 100) {
   return db.prepare(`SELECT o.*, 'SUPPLY-' || COALESCE(o.local_order_no,o.id) order_number,
@@ -813,8 +813,9 @@ app.post("/admin/customers/:id/reorder",requireAuth,requireAdmin,async(req,res)=
  if(selected.length!==ids.length)return res.status(400).send("Een of meer geselecteerde orders horen niet bij deze klant.");
  const lines=ids.flatMap(id=>orderItems(id).map(x=>({product_name:x.product_name,quantity:x.quantity,unit_price_cents:x.unit_price_cents})));
  if(!lines.length)return res.status(400).send("De geselecteerde orders bevatten geen orderregels.");
+ const fees=ids.flatMap(id=>orderFeeLines(id).map(x=>({name:x.name,amount_cents:x.amount_cents})));
  const notes=String(req.body.notes||"").trim().slice(0,2000)||"Herbestelling op verzoek van beheer";
- try{const newId=createOrder(customerId,lines,null,notes);queueOrderIntegrations(newId);res.redirect("/orders/"+newId);}
+ try{const newId=createOrder(customerId,lines,null,notes,null,fees);queueOrderIntegrations(newId);res.redirect("/orders/"+newId);}
  catch(err){console.error("Admin customer reorder failed:",err.message);res.status(500).send("Herbestelling maken is mislukt.");}
 });
 
