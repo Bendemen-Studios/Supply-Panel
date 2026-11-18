@@ -102,6 +102,14 @@ app.use((req,res,next)=>{
 });
 function moneyInput(value) { return Math.round(Number(String(value).replace(",", ".")) * 100); }
 function orderItems(orderId) { return db.prepare("SELECT product_name,quantity,unit_price_cents,meta_data FROM order_items WHERE order_id=?").all(orderId); }
+function orderFeeLines(orderId) { return db.prepare("SELECT id,name,amount_cents FROM order_fee_lines WHERE order_id=? ORDER BY id").all(orderId); }
+function recalculateOrderTotal(orderId) {
+ const products=db.prepare("SELECT COALESCE(SUM(quantity*unit_price_cents),0) total FROM order_items WHERE order_id=?").get(orderId).total;
+ const fees=db.prepare("SELECT COALESCE(SUM(amount_cents),0) total FROM order_fee_lines WHERE order_id=?").get(orderId).total;
+ const total=Number(products||0)+Number(fees||0);
+ db.prepare("UPDATE orders SET total_cents=? WHERE id=?").run(total,orderId);
+ return total;
+}
 function displayOrderStatus(o) {
   if (o.workflow_status === "cancelled" || o.wc_status === "cancelled") return "Geannuleerd";
   if (["processing","completed"].includes(o.wc_status)) return "In behandeling";
@@ -509,12 +517,14 @@ app.get("/orders/:id",requireAuth,async(req,res)=>{
   try{await woo.refreshWooOrder(id);}catch(e){console.error("Woo status refresh:",e.message);}
   const fresh=db.prepare("SELECT * FROM orders WHERE id=?").get(id),items=orderItems(id);
   const rows=items.map(i=>{let meta=[];try{meta=JSON.parse(i.meta_data||"[]");}catch(_){meta=[];}const detail=meta.filter(m=>m&&typeof m.key==="string"&&!m.key.startsWith("_")).map(m=>`<small class="hint">${esc(m.key)}: ${esc(typeof m.value==="string"?m.value:JSON.stringify(m.value))}</small>`).join("");return `<tr><td><strong>${esc(i.product_name)}</strong>${detail}</td><td>${i.quantity}</td><td>${money(i.unit_price_cents)}</td><td>${money(i.quantity*i.unit_price_cents)}</td></tr>`;}).join("");
+  const feeRows=orderFeeLines(id);
+  const feeHtml=feeRows.map(f=>`<tr><td>${esc(f.name)}</td><td>—</td><td>—</td><td>${money(f.amount_cents)}</td></tr>`).join("");
   const payBlock=fresh.payment_url&&!["processing","completed","refunded","cancelled"].includes(fresh.wc_status)?`<div class="payment-box"><div><strong>Deze bestelling staat nog open</strong><p>Betaal veilig via de betaalpagina van Bendemen Studios.</p></div><a class="primary" href="/orders/${id}/pay">Nu betalen <span>→</span></a></div>`:(fresh.wc_status?`<p class="hint">WooCommerce-status: ${esc(displayOrderStatus(fresh))}</p>`:'<p class="hint">De WooCommerce-betaallink verschijnt zodra de winkelkoppeling is ingesteld.</p>');
   const exampleImages=db.prepare("SELECT id FROM order_example_images WHERE order_id=? ORDER BY id").all(id);
   const legacyImage=fresh.example_image_path?'<img src="/orders/'+id+'/example-image" alt="Productvoorbeeld" style="max-width:100%;max-height:420px;object-fit:contain;border-radius:10px">':"";
   const exampleImageBlock=(exampleImages.length||legacyImage)?'<div class="panel"><h2>Productvoorbeelden</h2><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">'+legacyImage+exampleImages.map(img=>'<img src="/orders/'+id+'/example-images/'+img.id+'" alt="Productvoorbeeld" style="width:100%;max-height:320px;object-fit:contain;border-radius:10px">').join("")+'</div></div>':"";
   const invoiceBlock=fresh.wc_order_id&&["pending","on-hold","processing","completed","refunded"].includes(fresh.wc_status)?`<p class="invoice-action"><a class="secondary" href="/orders/${id}/pdf" target="_blank" rel="noopener">Factuur downloaden (PDF) →</a></p>`:"";
-  res.send(page(req,"Bestelling",`<a class="back" href="/orders">← Terug naar bestellingen</a><div class="page-title"><div class="eyebrow">BESTELLING SUPPLY-${o.local_order_no||id} · WOOCOMMERCE ${fresh.wc_order_number?esc(fresh.wc_order_number):"Nog niet gekoppeld"}</div><h1>Bestelling bekijken</h1><p>Aangemaakt op ${esc(o.created_at)} · <span class="status">${esc(displayOrderStatus(fresh))}</span></p></div>${payBlock}${invoiceBlock}${exampleImageBlock}${fresh.notes?`<div class="panel"><h2>Notities bij deze bestelling</h2><p style="white-space:pre-wrap">${esc(fresh.notes)}</p></div>`:""}<div class="panel"><div class="table-wrap"><table><thead><tr><th>Product</th><th>Aantal</th><th>Prijs per stuk</th><th>Totaal</th></tr></thead><tbody>${rows}</tbody></table></div><div class="total-line"><span>Ordertotaal</span><strong>${money(o.total_cents)}</strong></div></div>${!fresh.recurring_order_id&&fresh.allow_reorder!==0?`<form method="post" action="/orders/${id}/reorder" class="reorder-form"><div><strong>Deze bestelling opnieuw bestellen?</strong><p>We maken een nieuwe order aan met dezelfde producten en aantallen.</p><label>Notitie bij herbestelling (optioneel)<textarea name="notes" rows="2" maxlength="2000" placeholder="Bijvoorbeeld: graag dezelfde uitvoering en verpakking"></textarea></label></div><button class="primary">Opnieuw bestellen <span>→</span></button></form>`:`<p class="hint">Dit is een maatwerkbestelling. Opnieuw bestellen is voor deze bestelling uitgeschakeld.</p>`}`));
+  res.send(page(req,"Bestelling",`<a class="back" href="/orders">← Terug naar bestellingen</a><div class="page-title"><div class="eyebrow">BESTELLING SUPPLY-${o.local_order_no||id} · WOOCOMMERCE ${fresh.wc_order_number?esc(fresh.wc_order_number):"Nog niet gekoppeld"}</div><h1>Bestelling bekijken</h1><p>Aangemaakt op ${esc(o.created_at)} · <span class="status">${esc(displayOrderStatus(fresh))}</span></p></div>${payBlock}${invoiceBlock}${exampleImageBlock}${fresh.notes?`<div class="panel"><h2>Notities bij deze bestelling</h2><p style="white-space:pre-wrap">${esc(fresh.notes)}</p></div>`:""}<div class="panel"><div class="table-wrap"><table><thead><tr><th>Product</th><th>Aantal</th><th>Prijs per stuk</th><th>Totaal</th></tr></thead><tbody>${rows}${feeHtml}</tbody></table></div><div class="total-line"><span>Ordertotaal</span><strong>${money(o.total_cents)}</strong></div></div>${!fresh.recurring_order_id&&fresh.allow_reorder!==0?`<form method="post" action="/orders/${id}/reorder" class="reorder-form"><div><strong>Deze bestelling opnieuw bestellen?</strong><p>We maken een nieuwe order aan met dezelfde producten en aantallen.</p><label>Notitie bij herbestelling (optioneel)<textarea name="notes" rows="2" maxlength="2000" placeholder="Bijvoorbeeld: graag dezelfde uitvoering en verpakking"></textarea></label></div><button class="primary">Opnieuw bestellen <span>→</span></button></form>`:`<p class="hint">Dit is een maatwerkbestelling. Opnieuw bestellen is voor deze bestelling uitgeschakeld.</p>`}`));
 });
 
 app.get("/orders/:id/example-image",requireAuth,(req,res)=>{
@@ -593,8 +603,9 @@ app.post("/orders/:id/reorder",requireAuth,async(req,res)=>{
   if(order.recurring_order_id)return res.status(403).send("Abonnementsbestellingen kunnen niet opnieuw besteld worden.");
   if(order.allow_reorder===0)return res.status(403).send("Opnieuw bestellen is voor deze bestelling uitgeschakeld.");
   const lines=orderItems(id).map(x=>({product_name:x.product_name,quantity:x.quantity,unit_price_cents:x.unit_price_cents}));
+  const fees=orderFeeLines(id).map(x=>({name:x.name,amount_cents:x.amount_cents}));
   const notes=String(req.body.notes||"").trim().slice(0,2000);
-  try{const newId=createOrder(req.session.user.id,lines,id,notes||"Herbestelling");queueOrderIntegrations(newId);res.redirect(`/orders/${newId}`);}catch(err){console.error(err);res.status(500).send("Herbestelling maken is mislukt.");}
+  try{const newId=createOrder(req.session.user.id,lines,id,notes||"Herbestelling",null,fees);queueOrderIntegrations(newId);res.redirect(`/orders/${newId}`);}catch(err){console.error(err);res.status(500).send("Herbestelling maken is mislukt.");}
 });
 
 
@@ -890,7 +901,7 @@ app.post("/admin/orders/:id/items/:itemId/edit",requireAuth,requireAdmin,async(r
  if(!Array.isArray(meta)||meta.length>100||meta.some(m=>!m||typeof m.key!=="string"||m.key.length>200||m.value===undefined))return res.status(400).send("Ongeldige productmeta. Gebruik een JSON-lijst met key en value.");
  db.transaction(()=>{
   db.prepare("UPDATE order_items SET product_name=?,quantity=?,unit_price_cents=?,meta_data=? WHERE id=? AND order_id=?").run(name,qty,price,JSON.stringify(meta),itemId,id);
-  db.prepare("UPDATE orders SET total_cents=(SELECT COALESCE(SUM(quantity*unit_price_cents),0) FROM order_items WHERE order_id=?) WHERE id=?").run(id,id);
+  recalculateOrderTotal(id);
  })();
  const result=await syncWooOrder(id);
  res.redirect("/admin/orders/"+id+"/products"+(result?"?item_saved=1":"?sync_failed=1"));
@@ -899,7 +910,7 @@ app.post("/admin/orders/:id/items/:itemId/delete",requireAuth,requireAdmin,async
  const id=Number(req.params.id),itemId=Number(req.params.itemId),item=db.prepare("SELECT id FROM order_items WHERE id=? AND order_id=?").get(itemId,id);
  if(!item)return res.status(404).send("Orderregel niet gevonden.");
  db.prepare("DELETE FROM order_items WHERE id=? AND order_id=?").run(itemId,id);
- db.prepare("UPDATE orders SET total_cents=(SELECT COALESCE(SUM(quantity*unit_price_cents),0) FROM order_items WHERE order_id=?) WHERE id=?").run(id,id);
+ recalculateOrderTotal(id);
  const result=await syncWooOrder(id);
  res.redirect("/admin/orders/"+id+"/products"+(result?"?item_deleted=1":"?sync_failed=1"));
 });
@@ -916,7 +927,7 @@ app.post("/admin/orders/:id/custom-item",requireAuth,requireAdmin,async(req,res)
  const order=db.prepare("SELECT id FROM orders WHERE id=?").get(id);
  if(!order||!name||price===null||price<0||!Number.isSafeInteger(price)||!Number.isInteger(qty)||qty<1||qty>999)return res.status(400).send("Ongeldige maatwerkregel. Controleer omschrijving, prijs en aantal.");
  db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents,meta_data) VALUES (?,NULL,?,?,?,'[]')").run(id,name,qty,price);
- db.prepare("UPDATE orders SET total_cents=(SELECT COALESCE(SUM(quantity*unit_price_cents),0) FROM order_items WHERE order_id=?) WHERE id=?").run(id,id);
+ recalculateOrderTotal(id);
  const result=await syncWooOrder(id);
  res.redirect("/admin/orders/"+id+"/products"+(result?"?item_saved=1":"?sync_failed=1"));
 });
@@ -924,7 +935,7 @@ app.post("/admin/orders/:id/products",requireAuth,requireAdmin,async(req,res)=>{
  const id=Number(req.params.id),product=db.prepare("SELECT * FROM products WHERE id=? AND active=1").get(Number(req.body.product_id)),qty=Number(req.body.quantity);
  const order=db.prepare("SELECT id FROM orders WHERE id=?").get(id);if(!order||!product||!Number.isInteger(qty)||qty<1||qty>999)return res.status(400).send("Ongeldige bestelling, productkeuze of aantal.");
  db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents,meta_data) VALUES (?,?,?,?,?,?)").run(id,product.wc_product_id||("local:"+String(product.id)),product.name,qty,product.price_cents,product.meta_data||"[]");
- db.prepare("UPDATE orders SET total_cents=(SELECT COALESCE(SUM(quantity*unit_price_cents),0) FROM order_items WHERE order_id=?) WHERE id=?").run(id,id);
+ recalculateOrderTotal(id);
  const result=await syncWooOrder(id);
  res.redirect("/admin/orders/"+id+"/products"+(result?"?item_saved=1":"?sync_failed=1"));
 });
