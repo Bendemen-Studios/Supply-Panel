@@ -178,6 +178,11 @@ addColumn("products", "cost_cents", "INTEGER NOT NULL DEFAULT 0");
 addColumn("products", "meta_data", "TEXT NOT NULL DEFAULT '[]'");
 addColumn("order_items", "meta_data", "TEXT NOT NULL DEFAULT '[]'");
 addColumn("users", "wc_customer_id", "TEXT");
+addColumn("users", "email_2fa_enabled", "INTEGER NOT NULL DEFAULT 0");
+addColumn("users", "email_2fa_code_hash", "TEXT");
+addColumn("users", "email_2fa_expires_at", "INTEGER");
+addColumn("users", "email_2fa_prompt_snoozed_until", "INTEGER");
+
 addColumn("users", "billing_first_name", "TEXT");
 addColumn("users", "billing_last_name", "TEXT");
 addColumn("users", "billing_company", "TEXT");
