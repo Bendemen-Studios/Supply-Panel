@@ -61,7 +61,7 @@ const orderImageUpload = multer({
       cb(null, Date.now() + "-" + crypto.randomBytes(10).toString("hex") + ext);
     }
   }),
-  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+  limits: { fileSize: 8 * 1024 * 1024, files: 10 },
   fileFilter: (_req, file, cb) => {
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.mimetype)) return cb(new Error("Gebruik een JPG-, PNG- of WEBP-afbeelding."));
     cb(null, true);
@@ -500,7 +500,9 @@ app.get("/orders/:id",requireAuth,async(req,res)=>{
   const fresh=db.prepare("SELECT * FROM orders WHERE id=?").get(id),items=orderItems(id);
   const rows=items.map(i=>{let meta=[];try{meta=JSON.parse(i.meta_data||"[]");}catch(_){meta=[];}const detail=meta.filter(m=>m&&typeof m.key==="string"&&!m.key.startsWith("_")).map(m=>`<small class="hint">${esc(m.key)}: ${esc(typeof m.value==="string"?m.value:JSON.stringify(m.value))}</small>`).join("");return `<tr><td><strong>${esc(i.product_name)}</strong>${detail}</td><td>${i.quantity}</td><td>${money(i.unit_price_cents)}</td><td>${money(i.quantity*i.unit_price_cents)}</td></tr>`;}).join("");
   const payBlock=fresh.payment_url&&!["processing","completed","refunded","cancelled"].includes(fresh.wc_status)?`<div class="payment-box"><div><strong>Deze bestelling staat nog open</strong><p>Betaal veilig via de betaalpagina van Bendemen Studios.</p></div><a class="primary" href="/orders/${id}/pay">Nu betalen <span>→</span></a></div>`:(fresh.wc_status?`<p class="hint">WooCommerce-status: ${esc(displayOrderStatus(fresh))}</p>`:'<p class="hint">De WooCommerce-betaallink verschijnt zodra de winkelkoppeling is ingesteld.</p>');
-  const exampleImageBlock=fresh.example_image_path?`<div class="panel"><h2>Productvoorbeeld</h2><img src="/orders/${id}/example-image" alt="Voorbeeld van het bestelde product" style="display:block;max-width:100%;max-height:420px;object-fit:contain;border-radius:10px"></div>`:"";
+  const exampleImages=db.prepare("SELECT id FROM order_example_images WHERE order_id=? ORDER BY id").all(id);
+  const legacyImage=fresh.example_image_path?'<img src="/orders/'+id+'/example-image" alt="Productvoorbeeld" style="max-width:100%;max-height:420px;object-fit:contain;border-radius:10px">':"";
+  const exampleImageBlock=(exampleImages.length||legacyImage)?'<div class="panel"><h2>Productvoorbeelden</h2><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">'+legacyImage+exampleImages.map(img=>'<img src="/orders/'+id+'/example-images/'+img.id+'" alt="Productvoorbeeld" style="width:100%;max-height:320px;object-fit:contain;border-radius:10px">').join("")+'</div></div>':"";
   const invoiceBlock=fresh.wc_order_id&&["pending","on-hold","processing","completed","refunded"].includes(fresh.wc_status)?`<p class="invoice-action"><a class="secondary" href="/orders/${id}/pdf" target="_blank" rel="noopener">Factuur downloaden (PDF) →</a></p>`:"";
   res.send(page(req,"Bestelling",`<a class="back" href="/orders">← Terug naar bestellingen</a><div class="page-title"><div class="eyebrow">BESTELLING SUPPLY-${o.local_order_no||id} · WOOCOMMERCE ${fresh.wc_order_number?esc(fresh.wc_order_number):"Nog niet gekoppeld"}</div><h1>Bestelling bekijken</h1><p>Aangemaakt op ${esc(o.created_at)} · <span class="status">${esc(displayOrderStatus(fresh))}</span></p></div>${payBlock}${invoiceBlock}${exampleImageBlock}${fresh.notes?`<div class="panel"><h2>Notities bij deze bestelling</h2><p style="white-space:pre-wrap">${esc(fresh.notes)}</p></div>`:""}<div class="panel"><div class="table-wrap"><table><thead><tr><th>Product</th><th>Aantal</th><th>Prijs per stuk</th><th>Totaal</th></tr></thead><tbody>${rows}</tbody></table></div><div class="total-line"><span>Ordertotaal</span><strong>${money(o.total_cents)}</strong></div></div>${!fresh.recurring_order_id&&fresh.allow_reorder!==0?`<form method="post" action="/orders/${id}/reorder" class="reorder-form"><div><strong>Deze bestelling opnieuw bestellen?</strong><p>We maken een nieuwe order aan met dezelfde producten en aantallen.</p><label>Notitie bij herbestelling (optioneel)<textarea name="notes" rows="2" maxlength="2000" placeholder="Bijvoorbeeld: graag dezelfde uitvoering en verpakking"></textarea></label></div><button class="primary">Opnieuw bestellen <span>→</span></button></form>`:`<p class="hint">Dit is een maatwerkbestelling. Opnieuw bestellen is voor deze bestelling uitgeschakeld.</p>`}`));
 });
@@ -511,6 +513,18 @@ app.get("/orders/:id/example-image",requireAuth,(req,res)=>{
   if(!order|| (req.session.user.role!=="admin" && order.user_id!==req.session.user.id) || !order.example_image_path)
     return res.status(404).send("Productvoorbeeld niet gevonden.");
   const filename=path.basename(order.example_image_path);
+  res.setHeader("Cache-Control","private, no-store");
+  res.type(path.extname(filename).slice(1));
+  res.sendFile(path.join(orderImageDir,filename),err=>{if(err&&!res.headersSent)res.status(404).end();});
+});
+
+
+app.get("/orders/:id/example-images/:imageId",requireAuth,(req,res)=>{
+  const id=Number(req.params.id),imageId=Number(req.params.imageId);
+  const order=db.prepare("SELECT user_id FROM orders WHERE id=?").get(id);
+  const image=db.prepare("SELECT image_path FROM order_example_images WHERE id=? AND order_id=?").get(imageId,id);
+  if(!order||!image||(req.session.user.role!=="admin"&&order.user_id!==req.session.user.id))return res.status(404).send("Productvoorbeeld niet gevonden.");
+  const filename=path.basename(image.image_path);
   res.setHeader("Cache-Control","private, no-store");
   res.type(path.extname(filename).slice(1));
   res.sendFile(path.join(orderImageDir,filename),err=>{if(err&&!res.headersSent)res.status(404).end();});
@@ -809,32 +823,41 @@ app.get("/admin/orders/:id/products",requireAuth,requireAdmin,(req,res)=>{
  const products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 ORDER BY name").all(),items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(id);
  const options=products.map(p=>'<option value="'+p.id+'">'+esc(p.name)+' — '+money(p.price_cents)+'</option>').join("");
  const lines=items.map(x=>{let meta=[];try{meta=Array.isArray(x.meta_data)?x.meta_data:JSON.parse(x.meta_data||"[]");}catch(_){meta=[];}const visibleMeta=meta.filter(m=>m&&typeof m.key==="string"&&!m.key.startsWith("_")).map(m=>'<div class="hint">'+esc(m.key)+': '+esc(typeof m.value==="string"?m.value:JSON.stringify(m.value))+'</div>').join("");return '<tr><td><form method="post" action="/admin/orders/'+id+'/items/'+x.id+'/edit" class="stack"><label>Productnaam / omschrijving<input name="name" maxlength="180" value="'+esc(x.product_name)+'" required></label><label>Aantal<input name="quantity" type="number" min="1" max="999" value="'+x.quantity+'" required></label><label>Prijs per stuk (€)<input name="price" inputmode="decimal" value="'+(x.unit_price_cents/100).toFixed(2).replace(".",",")+'" required></label><label>Productmeta / extra tekst (JSON)<textarea name="meta_data" rows="3">'+esc(JSON.stringify(meta))+'</textarea></label><div class="hint">Zichtbare producttekst: '+(visibleMeta||'Geen zichtbare meta')+'</div><button class="primary">Regel opslaan en synchroniseren</button></form></td><td>'+money(x.quantity*x.unit_price_cents)+'</td><td><form method="post" action="/admin/orders/'+id+'/items/'+x.id+'/delete" onsubmit="return confirm(&quot;Deze orderregel verwijderen?&quot;)"><button class="danger">Verwijderen</button></form></td></tr>';}).join("");
- const settingsPanel='<div class="panel"><h2>Herbestellen en productvoorbeeld</h2><form method="post" action="/admin/orders/'+id+'/settings" enctype="multipart/form-data" class="stack"><label style="display:flex;align-items:center;gap:10px"><input type="checkbox" name="allow_reorder" value="1" '+(order.allow_reorder!==0?'checked':'')+' style="width:auto"> Deze bestelling is herbestelbaar</label><label>Voorbeeldfoto van het product (JPG, PNG of WEBP, max. 8 MB)<input type="file" name="example_image" accept="image/jpeg,image/png,image/webp"></label>'+(order.example_image_path?'<div><img src="/orders/'+id+'/example-image" alt="Huidig productvoorbeeld" style="display:block;max-width:220px;max-height:180px;object-fit:contain;border-radius:8px;margin:8px 0"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" name="remove_example_image" value="1" style="width:auto"> Voorbeeldfoto verwijderen</label></div>':'')+'<button class="primary">Instellingen opslaan</button></form></div>';
+ const exampleImages=db.prepare("SELECT id FROM order_example_images WHERE order_id=? ORDER BY id").all(id);
+ const settingsPanel='<div class="panel"><h2>Herbestellen en productvoorbeelden</h2><form method="post" action="/admin/orders/'+id+'/settings" enctype="multipart/form-data" class="stack"><label style="display:flex;align-items:center;gap:10px"><input type="checkbox" name="allow_reorder" value="1" '+(order.allow_reorder!==0?'checked':'')+' style="width:auto"> Deze bestelling is herbestelbaar</label><label>Productfoto’s toevoegen (max. 10 foto’s per keer, JPG, PNG of WEBP, max. 8 MB per foto)<input type="file" name="example_images" accept="image/jpeg,image/png,image/webp" multiple></label>'+(order.example_image_path?'<div><img src="/orders/'+id+'/example-image" alt="Oud productvoorbeeld" style="display:block;max-width:180px;max-height:140px;object-fit:contain;border-radius:8px;margin:8px 0">Oude voorbeeldfoto</div>':'')+exampleImages.map(img=>'<label style="display:flex;align-items:center;gap:10px"><img src="/orders/'+id+'/example-images/'+img.id+'" alt="Productvoorbeeld" style="width:90px;height:70px;object-fit:contain;border-radius:8px"><input type="checkbox" name="remove_image_ids" value="'+img.id+'" style="width:auto"> Deze foto verwijderen</label>').join("")+'<button class="primary">Instellingen opslaan</button></form></div>';
  res.send(page(req,"Order bewerken",settingsPanel+(req.query.settings_saved?'<div class="success">Herbestelinstelling en productvoorbeeld opgeslagen.</div>':req.query.settings_error?'<div class="alert">Instellingen konden niet volledig worden opgeslagen.</div>':"")+(req.query.sync_failed?'<div class="alert">Lokaal opgeslagen, maar synchroniseren met WooCommerce is mislukt. Probeer opnieuw.</div>':req.query.item_saved?'<div class="success">Orderregel opgeslagen en gesynchroniseerd.</div>':req.query.item_deleted?'<div class="success">Orderregel verwijderd en gesynchroniseerd.</div>':'')+'<a class="back" href="/admin">← Beheer</a><div class="page-title"><h1>Producten koppelen aan BDS-'+String(id).padStart(6,'0')+'</h1><p>Klant: '+esc(order.customer_name)+'</p></div><div class="panel"><h2>Opmerking bij bestelling</h2><p>Deze opmerking wordt opgeslagen bij de bestelling en als klantnotitie naar WooCommerce gestuurd voor de factuur.</p><form method="post" action="/admin/orders/'+id+'/note" class="stack"><label>Opmerking<textarea name="notes" rows="4" maxlength="2000" placeholder="Opmerking die op de factuur moet komen">'+esc(order.notes||"")+'</textarea></label><button class="primary">Opmerking opslaan</button></form></div><div class="panel"><form method="post" action="/admin/orders/'+id+'/products" class="stack"><div class="field"><span class="field-label">Selecteer producten</span><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;max-height:320px;overflow:auto;padding:2px">'+options+'</div></div><label>Aantal per product<input name="quantity" type="number" min="1" max="999" value="1" required></label><button class="primary">Product toevoegen aan bestelling</button></form></div><div class="panel"><h2>Maatwerk / kostenregel toevoegen</h2><p>Voor maatwerk dat niet als WooCommerce-product bestaat. Wordt alleen aan deze bestelling toegevoegd.</p><form method="post" action="/admin/orders/'+id+'/custom-item" class="stack"><label>Omschrijving<input name="name" maxlength="180" placeholder="Bijv. 3D-print op maat" required></label><label>Prijs per stuk in euro<input name="price" inputmode="decimal" placeholder="0,00" required></label><label>Aantal<input name="quantity" type="number" min="1" max="999" value="1" required></label><button class="primary">Maatwerkregel toevoegen</button></form></div><div class="panel"><h2>Orderregels bewerken</h2><p>Pas productnaam, aantal, prijs en zichtbare productmeta aan. Na opslaan wordt de bestelling direct naar WooCommerce bijgewerkt.</p><div class="table-wrap"><table><thead><tr><th>Product / regel bewerken</th><th>Regeltotaal</th><th></th></tr></thead><tbody>'+lines+'</tbody></table></div>'));
 });
 
 app.post("/admin/orders/:id/settings",requireAuth,requireAdmin,(req,res,next)=>{
-  orderImageUpload.single("example_image")(req,res,error=>{
-    if(error)return res.status(400).send(error.message||"Afbeelding uploaden is mislukt.");
+  orderImageUpload.array("example_images",10)(req,res,error=>{
+    if(error)return res.status(400).send(error.message||"Afbeeldingen uploaden is mislukt.");
     next();
   });
 },(req,res)=>{
   const id=Number(req.params.id);
   const order=db.prepare("SELECT id,recurring_order_id,example_image_path FROM orders WHERE id=?").get(id);
-  if(!order){if(req.file)fs.unlink(req.file.path,()=>{});return res.status(404).send("Bestelling niet gevonden.");}
+  if(!order){for(const file of req.files||[])fs.unlink(file.path,()=>{});return res.status(404).send("Bestelling niet gevonden.");}
   const allowReorder=order.recurring_order_id?0:(req.body.allow_reorder==="1"?1:0);
-  let imagePath=order.example_image_path||null;
-  if(req.file)imagePath=req.file.filename;
-  if(req.body.remove_example_image==="1"&&!req.file)imagePath=null;
+  const files=req.files||[];
+  const removeIdsRaw=req.body.remove_image_ids||[];
+  const removeIds=[...new Set((Array.isArray(removeIdsRaw)?removeIdsRaw:[removeIdsRaw]).map(Number).filter(n=>Number.isSafeInteger(n)&&n>0))];
   try{
-    db.prepare("UPDATE orders SET allow_reorder=?,example_image_path=? WHERE id=?").run(allowReorder,imagePath,id);
+    const tx=db.transaction(()=>{
+      db.prepare("UPDATE orders SET allow_reorder=? WHERE id=?").run(allowReorder,id);
+      const insert=db.prepare("INSERT INTO order_example_images (order_id,image_path) VALUES (?,?)");
+      for(const file of files)insert.run(id,file.filename);
+      if(removeIds.length){
+        const placeholders=removeIds.map(()=>"?").join(",");
+        const owned=db.prepare("SELECT id,image_path FROM order_example_images WHERE order_id=? AND id IN ("+placeholders+")").all(id,...removeIds);
+        db.prepare("DELETE FROM order_example_images WHERE order_id=? AND id IN ("+placeholders+")").run(id,...removeIds);
+        for(const img of owned)fs.unlink(path.join(orderImageDir,path.basename(img.image_path)),()=>{});
+      }
+    });
+    tx();
   }catch(error){
-    if(req.file)fs.unlink(req.file.path,()=>{});
+    for(const file of files)fs.unlink(file.path,()=>{});
     console.error("Order settings save failed:",error.message);
     return res.status(500).send("Bestelinstellingen opslaan is mislukt.");
-  }
-  if(order.example_image_path&&order.example_image_path!==imagePath){
-    fs.unlink(path.join(orderImageDir,path.basename(order.example_image_path)),()=>{});
   }
   res.redirect("/admin/orders/"+id+"/products?settings_saved=1");
 });
