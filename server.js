@@ -102,6 +102,9 @@ app.use((req,res,next)=>{
 });
 function moneyInput(value) { return Math.round(Number(String(value).replace(",", ".")) * 100); }
 function orderItems(orderId) { return db.prepare("SELECT product_name,quantity,unit_price_cents,meta_data FROM order_items WHERE order_id=?").all(orderId); }
+function discardOrderUploads(req) {
+ for(const file of req.files||[])if(file&&file.path)fs.unlink(file.path,()=>{});
+}
 function orderFeeLines(orderId) { return db.prepare("SELECT id,name,amount_cents FROM order_fee_lines WHERE order_id=? ORDER BY id").all(orderId); }
 function recalculateOrderTotal(orderId) {
  const products=db.prepare("SELECT COALESCE(SUM(quantity*unit_price_cents),0) total FROM order_items WHERE order_id=?").get(orderId).total;
@@ -710,18 +713,18 @@ app.get("/admin/orders/new",requireAuth,requireAdmin,(req,res)=>{
 });
 app.post("/admin/orders/new",requireAuth,requireAdmin,orderImageUpload.array("example_images",10),async(req,res)=>{
  const userId=Number(req.body.user_id),customer=db.prepare("SELECT id FROM users WHERE id=? AND role='customer' AND active=1").get(userId);
- if(!customer)return res.status(400).send("Selecteer een geldige actieve klant.");
+ if(!customer){discardOrderUploads(req);return res.status(400).send("Selecteer een geldige actieve klant.");}
  const raw=req.body.product_ids||[],ids=(Array.isArray(raw)?raw:[raw]).map(Number);
- if(!ids.length||ids.some(id=>!Number.isSafeInteger(id)||id<1))return res.status(400).send("Voeg minimaal één geldig product toe aan het mandje.");
+ if(!ids.length||ids.some(id=>!Number.isSafeInteger(id)||id<1)){discardOrderUploads(req);return res.status(400).send("Voeg minimaal één geldig product toe aan het mandje.");}
  const uniqueIds=[...new Set(ids)],placeholders=uniqueIds.map(()=>"?").join(",");
  const products=db.prepare("SELECT id,wc_product_id,name,meta_data FROM products WHERE active=1 AND id IN ("+placeholders+")").all(...uniqueIds);
- if(products.length!==uniqueIds.length)return res.status(400).send("Een of meer geselecteerde producten zijn niet meer actief.");
+ if(products.length!==uniqueIds.length){discardOrderUploads(req);return res.status(400).send("Een of meer geselecteerde producten zijn niet meer actief.");}
  const productMap=new Map(products.map(p=>[p.id,p])),lines=[];
  for(let index=0;index<ids.length;index++){
   const product=productMap.get(ids[index]),quantity=Number(req.body["quantity_"+ids[index]+"_"+index]||1),price=moneyInput(req.body["price_"+ids[index]+"_"+index]);
-  if(!product)return res.status(400).send("Een geselecteerd product is niet meer actief.");
-  if(!Number.isInteger(quantity)||quantity<1||quantity>999)return res.status(400).send("Controleer de aantallen. Gebruik minimaal 1 en maximaal 999.");
-  if(!Number.isSafeInteger(price)||price<0||price>100000000)return res.status(400).send("Controleer de productprijzen. Gebruik een bedrag tussen € 0,00 en € 1.000.000,00.");
+  if(!product){discardOrderUploads(req);return res.status(400).send("Een geselecteerd product is niet meer actief.");}
+  if(!Number.isInteger(quantity)||quantity<1||quantity>999){discardOrderUploads(req);return res.status(400).send("Controleer de aantallen. Gebruik minimaal 1 en maximaal 999.");}
+  if(!Number.isSafeInteger(price)||price<0||price>100000000){discardOrderUploads(req);return res.status(400).send("Controleer de productprijzen. Gebruik een bedrag tussen € 0,00 en € 1.000.000,00.");}
   lines.push({product_id:product.wc_product_id?String(product.wc_product_id):"local:"+String(product.id),product_name:product.name,quantity,unit_price_cents:price,meta_data:product.meta_data||"[]"});
  }
  const feeNames=Array.isArray(req.body.fee_name)?req.body.fee_name:[req.body.fee_name].filter(Boolean);
@@ -730,7 +733,7 @@ app.post("/admin/orders/new",requireAuth,requireAdmin,orderImageUpload.array("ex
  for(let i=0;i<feeNames.length;i++){
   const name=String(feeNames[i]||"").trim().slice(0,120),amount=moneyInput(feeAmounts[i]||"");
   if(!name&&!feeAmounts[i])continue;
-  if(!name||!Number.isSafeInteger(amount)||amount<0||amount>100000000)return res.status(400).send("Controleer de omschrijving en het bedrag van iedere extra kostenregel.");
+  if(!name||!Number.isSafeInteger(amount)||amount<0||amount>100000000){discardOrderUploads(req);return res.status(400).send("Controleer de omschrijving en het bedrag van iedere extra kostenregel.");}
   feeLines.push({name,amount_cents:amount});
  }
  const notes=String(req.body.notes||"").trim().slice(0,2000);
@@ -742,7 +745,7 @@ app.post("/admin/orders/new",requireAuth,requireAdmin,orderImageUpload.array("ex
   queueOrderNotifications(orderId);
   const created=db.prepare("SELECT local_order_no FROM orders WHERE id=?").get(orderId);
   res.redirect("/admin/orders?order_created=1&woo_sync="+(wooResult&&wooResult.id?"ok":"failed")+"&order_number="+encodeURIComponent("SUPPLY-"+(created.local_order_no||orderId)));
- }catch(err){console.error("Admin supply order creation failed:",err.message);res.status(500).send("Supply order aanmaken is mislukt.");}
+ }catch(err){discardOrderUploads(req);console.error("Admin supply order creation failed:",err.message);res.status(500).send("Supply order aanmaken is mislukt.");}
 });
 app.get("/admin/orders",requireAuth,requireAdmin,(req,res)=>{
  const rows=db.prepare(`SELECT o.id,o.local_order_no,o.created_at,o.total_cents,o.status,o.wc_status,o.wc_order_id,o.wc_order_number,o.payment_url,u.name customer_name,u.email customer_email,COALESCE(NULLIF(r.email_override,''),u.email) mail_recipient,
