@@ -56,23 +56,31 @@ async function createWooOrder(order,items,fees=[]){
 }
 async function updateWooOrder(wcOrderId,items,fees=[]){
  const existing=await request(`orders/${encodeURIComponent(wcOrderId)}`);
- const line_items=[],fee_lines=[];
+ const oldItems=Array.isArray(existing.line_items)?existing.line_items:[];
+ const oldFees=Array.isArray(existing.fee_lines)?existing.fee_lines:[];
+ const line_items=[],fee_lines=[],usedItemIds=new Set(),usedFeeIds=new Set();
  for(const item of items){
   const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
-  const wcProductId=item.product_id&&/^\d+$/.test(String(item.product_id))?String(item.product_id):null;
+  const wcProductId=item.product_id&&/^\\d+$/.test(String(item.product_id))?String(item.product_id):null;
   if(wcProductId){
-   const match=(existing.line_items||[]).find(line=>String(line.product_id)===wcProductId)||existing.line_items?.[line_items.length];
+   const match=oldItems.find(line=>String(line.product_id)===wcProductId&&!usedItemIds.has(line.id));
+   if(match)usedItemIds.add(match.id);
    line_items.push({...(match?{id:match.id}:{}),product_id:Number(wcProductId),quantity:item.quantity,subtotal:total,total,meta_data:normalizeLineMeta(item.meta_data)});
   }else{
    const name=item.quantity>1?`${item.product_name} (aantal: ${item.quantity})`:item.product_name;
-   const match=(existing.fee_lines||[]).find(line=>line.name===name);
+   const match=oldFees.find(line=>line.name===name&&!usedFeeIds.has(line.id));
+   if(match)usedFeeIds.add(match.id);
    fee_lines.push({...(match?{id:match.id}:{}),name,tax_status:"none",total});
   }
  }
  for(const fee of fees){
-  const match=(existing.fee_lines||[]).find(line=>line.name===fee.name&&!fee_lines.some(x=>x.id===line.id));
+  const match=oldFees.find(line=>line.name===fee.name&&!usedFeeIds.has(line.id));
+  if(match)usedFeeIds.add(match.id);
   fee_lines.push({...(match?{id:match.id}:{}),name:fee.name,tax_status:"none",total:(fee.amount_cents/100).toFixed(2)});
  }
+ // WooCommerce verwijdert regels niet automatisch wanneer ze ontbreken in een PUT-payload.
+ for(const line of oldItems)if(!usedItemIds.has(line.id))line_items.push({id:line.id,delete:true});
+ for(const line of oldFees)if(!usedFeeIds.has(line.id))fee_lines.push({id:line.id,delete:true});
  return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{line_items,fee_lines});
 }
 async function updateWooOrderNote(wcOrderId,notes){return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{meta_data:[{key:"_wcpdf_invoice_notes",value:String(notes||"")}]});}
