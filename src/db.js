@@ -200,6 +200,7 @@ addColumn("orders", "source_order_id", "INTEGER");
 addColumn("orders", "notes", "TEXT");
 addColumn("orders", "recurring_order_id", "INTEGER");
 addColumn("orders", "allow_reorder", "INTEGER NOT NULL DEFAULT 1");
+addColumn("orders", "example_image_path", "TEXT");
 addColumn("orders", "show_in_history", "INTEGER NOT NULL DEFAULT 0");
 addColumn("orders", "local_order_no", "INTEGER");
 addColumn("orders", "wc_order_number", "TEXT");
