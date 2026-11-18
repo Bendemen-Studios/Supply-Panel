@@ -30,7 +30,7 @@ const bcrypt = require("bcryptjs");
 const db = require("./src/db");
 const { requireAuth, requireAdmin } = require("./src/auth");
 const woo = require("./src/woocommerce");
-const { sendAutomatedOrderEmail, sendScheduledOrderReminder, verifySmtpConnection } = require("./src/order-mail");
+const { sendAutomatedOrderEmail, sendScheduledOrderReminder, sendSecurityCodeEmail, verifySmtpConnection } = require("./src/order-mail");
 const { addBillingPeriod } = require("./src/billing-period");
 const { shiftDate, reminderSchedule } = require("./src/order-reminders");
 
@@ -428,12 +428,91 @@ app.get("/login",(req,res)=>{
   const error=req.query.error?'<div class="alert">Inloggen is niet gelukt. Controleer je e-mailadres en wachtwoord.</div>':"";
   res.send(page(req,"Inloggen",`<section class="auth-card"><div class="eyebrow">BENDEMEN STUDIOS</div><h1>Welkom terug.</h1><p class="sub">Log in met je e-mailadres en wachtwoord om je account te beheren.</p>${req.query.disabled?'<div class="alert">Je Supply Panel-account is uitgeschakeld. Je WooCommerce-account op de webshop blijft gewoon werken.</div>':""}${linkMessage}${error}<form method="post" action="/login" class="stack"><label>E-mailadres<input name="email" type="email" autocomplete="username" required></label><label>Wachtwoord<input name="password" type="password" autocomplete="current-password" required></label><button class="primary">Inloggen <span>→</span></button></form></section>`));
 });
+
+function createEmail2FACode() {
+ const code=String(crypto.randomInt(0,1000000)).padStart(6,"0");
+ return {code,hash:crypto.createHash("sha256").update(code).digest("hex"),expires:Date.now()+600000};
+}
+function validEmail2FACode(input,hash,expires) {
+ if(!hash||!expires||Number(expires)<Date.now())return false;
+ const candidate=crypto.createHash("sha256").update(String(input||"")).digest(),expected=Buffer.from(String(hash),"hex");
+ return expected.length===candidate.length&&crypto.timingSafeEqual(candidate,expected);
+}
+function authenticatedUser(req,user){req.session.user={id:user.id,name:user.name,email:user.email,role:user.role};}
+async function sendEmail2FACode(user,purpose){
+ const c=createEmail2FACode();
+ db.prepare("UPDATE users SET email_2fa_code_hash=?,email_2fa_expires_at=? WHERE id=?").run(c.hash,c.expires,user.id);
+ await sendSecurityCodeEmail({to:user.email,code:c.code,purpose});
+}
 app.post("/login",loginLimiter,async(req,res)=>{
-  const email=String(req.body.email||"").trim().toLowerCase();
-  const password=String(req.body.password||"");
-  const user=db.prepare("SELECT * FROM users WHERE email=? COLLATE NOCASE").get(email);
-  if(!user||user.active!==1||!["admin","customer"].includes(user.role)||(user.role==="customer"&&!user.wc_customer_id)||!(await bcrypt.compare(password,user.password_hash)))return res.redirect("/login?error=1");
-  req.session.regenerate(err=>{if(err)return res.status(500).send("Sessie kon niet worden gestart.");req.session.user={id:user.id,name:user.name,email:user.email,role:user.role};res.redirect(user.role==="admin"?"/admin":"/");});
+ const email=String(req.body.email||"").trim().toLowerCase(),password=String(req.body.password||"");
+ const user=db.prepare("SELECT * FROM users WHERE email=? COLLATE NOCASE").get(email);
+ if(!user||user.active!==1||!["admin","customer"].includes(user.role)||(user.role==="customer"&&!user.wc_customer_id)||!(await bcrypt.compare(password,user.password_hash)))return res.redirect("/login?error=1");
+ req.session.regenerate(async err=>{
+  if(err)return res.status(500).send("Sessie kon niet worden gestart.");
+  if(Number(user.email_2fa_enabled)===1){
+   req.session.pendingEmail2FA={userId:user.id,expiresAt:Date.now()+600000,attempts:0};
+   try{await sendEmail2FACode(user,"login");res.redirect("/login/2fa");}
+   catch(error){console.error("Email 2FA login-code failed:",error.message);req.session.destroy(()=>res.redirect("/login?mail_error=1"));}
+   return;
+  }
+  authenticatedUser(req,user);
+  res.redirect(Number(user.email_2fa_prompt_snoozed_until||0)>Date.now()?(user.role==="admin"?"/admin":"/"):"/account/security/2fa?offer=1");
+ });
+});
+app.get("/login/2fa",(req,res)=>{
+ if(!req.session.pendingEmail2FA)return res.redirect("/login");
+ res.send(page(req,"E-mailcode",'<section class="auth-card"><div class="eyebrow">EXTRA BEVEILIGING</div><h1>Controleer je e-mail.</h1><p class="sub">We hebben een zescijferige inlogcode gestuurd naar je accountadres.</p>'+(req.query.error?'<div class="alert">De code is onjuist of verlopen.</div>':'')+'<form method="post" action="/login/2fa" class="stack"><label>Beveiligingscode<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label><button class="primary">Inloggen</button></form><form method="post" action="/login/2fa/resend" class="stack"><button class="secondary">Nieuwe code versturen</button></form></section>'));
+});
+app.post("/login/2fa",loginLimiter,(req,res)=>{
+ const pending=req.session.pendingEmail2FA;
+ if(!pending||pending.expiresAt<Date.now())return res.redirect("/login?error=1");
+ const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1 AND email_2fa_enabled=1").get(pending.userId);
+ if(!user)return req.session.destroy(()=>res.redirect("/login"));
+ if(!validEmail2FACode(req.body.code,user.email_2fa_code_hash,user.email_2fa_expires_at)){
+  pending.attempts=(pending.attempts||0)+1;
+  if(pending.attempts>=5)return req.session.destroy(()=>res.redirect("/login?error=1"));
+  return res.redirect("/login/2fa?error=1");
+ }
+ db.prepare("UPDATE users SET email_2fa_code_hash=NULL,email_2fa_expires_at=NULL WHERE id=?").run(user.id);
+ delete req.session.pendingEmail2FA;authenticatedUser(req,user);res.redirect(user.role==="admin"?"/admin":"/");
+});
+app.post("/login/2fa/resend",loginLimiter,async(req,res)=>{
+ const pending=req.session.pendingEmail2FA;if(!pending||pending.expiresAt<Date.now())return res.redirect("/login");
+ const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1 AND email_2fa_enabled=1").get(pending.userId);
+ if(!user)return res.redirect("/login");
+ try{await sendEmail2FACode(user,"login");pending.expiresAt=Date.now()+600000;pending.attempts=0;res.redirect("/login/2fa");}
+ catch(error){console.error("Email 2FA resend failed:",error.message);res.redirect("/login/2fa?error=1");}
+});
+
+
+app.get("/account/security/2fa",requireAuth,(req,res)=>{
+ const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1").get(req.session.user.id);if(!user)return res.status(404).send("Account niet gevonden.");
+ const enabled=Number(user.email_2fa_enabled)===1,offer=req.query.offer==="1"&&!enabled;
+ const notice=req.query.enabled?'<div class="success">E-mailverificatie is ingeschakeld.</div>':req.query.skipped?'<div class="success">We vragen je over 24 uur opnieuw.</div>':req.query.error?'<div class="alert">De code is onjuist of verlopen.</div>':"";
+ const body='<div class="page-title"><div class="eyebrow">ACCOUNTBEVEILIGING</div><h1>E-mailverificatie</h1><p>Ontvang bij het inloggen een extra code per e-mail.</p></div><div class="panel"><h2>'+(enabled?'Ingeschakeld':'Niet ingeschakeld')+'</h2><p>'+(enabled?'Bij iedere login sturen we een code naar '+esc(user.email)+'.':'Deze extra beveiliging is optioneel.')+'</p>'+notice+(enabled?'<form method="post" action="/account/security/2fa/disable" class="stack"><label>Huidig wachtwoord<input name="password" type="password" autocomplete="current-password" required></label><button class="secondary">Uitschakelen</button></form>':offer?'<div class="row-actions"><form method="post" action="/account/security/2fa/skip"><button class="secondary">Overslaan (24 uur niet vragen)</button></form><form method="post" action="/account/security/2fa/setup"><button class="primary">E-mailverificatie instellen</button></form></div>':'<form method="post" action="/account/security/2fa/setup" class="stack"><button class="primary">E-mailverificatie inschakelen</button></form>')+'</div>';
+ res.send(page(req,"E-mailverificatie",body));
+});
+app.post("/account/security/2fa/skip",requireAuth,(req,res)=>{
+ db.prepare("UPDATE users SET email_2fa_prompt_snoozed_until=? WHERE id=?").run(Date.now()+86400000,req.session.user.id);res.redirect(req.session.user.role==="admin"?"/admin":"/");
+});
+app.post("/account/security/2fa/setup",requireAuth,async(req,res)=>{
+ const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1").get(req.session.user.id);if(!user)return res.status(404).send("Account niet gevonden.");
+ try{await sendEmail2FACode(user,"setup");res.redirect("/account/security/2fa/verify?sent=1");}
+ catch(error){console.error("Email 2FA setup failed:",error.message);res.status(502).send("De verificatiecode kon niet worden verstuurd. Controleer de e-mailinstellingen.");}
+});
+app.get("/account/security/2fa/verify",requireAuth,(req,res)=>{
+ res.send(page(req,"Verificatiecode",'<section class="auth-card"><div class="eyebrow">ACCOUNTBEVEILIGING</div><h1>Bevestig je e-mailadres.</h1><p class="sub">Vul de zescijferige code in die we hebben gestuurd.</p>'+(req.query.sent?'<div class="success">Verificatiecode verstuurd.</div>':'')+(req.query.error?'<div class="alert">De code is onjuist of verlopen.</div>':'')+'<form method="post" action="/account/security/2fa/verify" class="stack"><label>Verificatiecode<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label><button class="primary">Bevestigen en inschakelen</button></form><form method="post" action="/account/security/2fa/setup" class="stack"><button class="secondary">Nieuwe code versturen</button></form></section>'));
+});
+app.post("/account/security/2fa/verify",requireAuth,(req,res)=>{
+ const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1").get(req.session.user.id);if(!user)return res.status(404).send("Account niet gevonden.");
+ if(!validEmail2FACode(req.body.code,user.email_2fa_code_hash,user.email_2fa_expires_at))return res.redirect("/account/security/2fa/verify?error=1");
+ db.prepare("UPDATE users SET email_2fa_enabled=1,email_2fa_code_hash=NULL,email_2fa_expires_at=NULL,email_2fa_prompt_snoozed_until=NULL WHERE id=?").run(user.id);res.redirect("/account/security/2fa?enabled=1");
+});
+app.post("/account/security/2fa/disable",requireAuth,async(req,res)=>{
+ const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1").get(req.session.user.id);
+ if(!user||!(await bcrypt.compare(String(req.body.password||""),user.password_hash)))return res.status(400).send("Het wachtwoord is onjuist.");
+ db.prepare("UPDATE users SET email_2fa_enabled=0,email_2fa_code_hash=NULL,email_2fa_expires_at=NULL WHERE id=?").run(user.id);res.redirect("/account/security/2fa");
 });
 app.get("/account",requireAuth,(req,res)=>{
  const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1").get(req.session.user.id);
@@ -441,7 +520,7 @@ app.get("/account",requireAuth,(req,res)=>{
  const saved=req.query.billing_saved?'<div class="success">Je factuuradres is opgeslagen'+(user.wc_customer_id?' en gesynchroniseerd met WooCommerce.':'.')+'</div>':'';
  const syncNotice=req.query.billing_synced?'<div class="success">De actuele factuurgegevens zijn opgehaald uit WooCommerce. De gegevens hieronder zijn bijgewerkt.</div>':req.query.billing_sync_error?'<div class="alert">Factuurgegevens synchroniseren is mislukt: '+esc(req.query.billing_sync_error)+'</div>':'';
  const billingForm='<div class="panel"><h2>Factuuradres</h2><p>Dit adres wordt gebruikt voor nieuwe bestellingen en facturen.</p>'+saved+syncNotice+'<form method="post" action="/account/billing" class="stack"><div class="form-grid"><label>Voornaam<input name="billing_first_name" value="'+esc(user.billing_first_name||"")+'" autocomplete="given-name" required></label><label>Achternaam<input name="billing_last_name" value="'+esc(user.billing_last_name||"")+'" autocomplete="family-name"></label></div><label>Bedrijfsnaam<input name="billing_company" value="'+esc(user.billing_company||"")+'" autocomplete="organization"></label><label>Straat en huisnummer<input name="billing_address_1" value="'+esc(user.billing_address_1||"")+'" autocomplete="address-line1" required></label><label>Toevoeging / tweede adresregel<input name="billing_address_2" value="'+esc(user.billing_address_2||"")+'" autocomplete="address-line2"></label><div class="form-grid"><label>Postcode<input name="billing_postcode" value="'+esc(user.billing_postcode||"")+'" autocomplete="postal-code" required></label><label>Plaats<input name="billing_city" value="'+esc(user.billing_city||"")+'" autocomplete="address-level2" required></label></div><div class="form-grid"><label>Provincie / regio<input name="billing_state" value="'+esc(user.billing_state||"")+'" autocomplete="address-level1"></label><label>Land<select name="billing_country" required><option value="NL"'+((user.billing_country||"NL")==="NL"?' selected':'')+'>Nederland</option><option value="BE"'+(user.billing_country==="BE"?' selected':'')+'>België</option><option value="DE"'+(user.billing_country==="DE"?' selected':'')+'>Duitsland</option><option value="GB"'+(user.billing_country==="GB"?' selected':'')+'>Verenigd Koninkrijk</option></select></label></div><label>Telefoon<input name="billing_phone" type="tel" value="'+esc(user.billing_phone||"")+'" autocomplete="tel"></label><button class="primary">Factuuradres opslaan</button></form>'+(user.wc_customer_id?'<form method="post" action="/account/billing/sync" style="margin-top:12px"><button class="secondary">Nu synchroniseren ↻</button><p class="hint">Haalt de nieuwste factuurgegevens rechtstreeks uit WooCommerce op.</p></form>':'<p class="hint">Dit account is niet gekoppeld aan een WooCommerce-klant.</p>')+'</div>';
- res.send(page(req,"Profiel",'<div class="page-title"><div class="eyebrow">ACCOUNT</div><h1>Profiel</h1><p>Je accountgegevens en beveiligingsinstellingen.</p></div><div class="panel profile-panel"><div><span class="profile-label">Naam</span><strong>'+esc(user.name)+'</strong></div><div><span class="profile-label">E-mailadres</span><strong>'+esc(user.email)+'</strong></div><div><span class="profile-label">Accounttype</span><strong>'+(user.role==="admin"?"Beheerder":"Klant")+'</strong></div><a class="primary inline" href="/account/password">Wachtwoord wijzigen <span>→</span></a></div>'+billingForm));
+ res.send(page(req,"Profiel",'<div class="page-title"><div class="eyebrow">ACCOUNT</div><h1>Profiel</h1><p>Je accountgegevens en beveiligingsinstellingen.</p></div><div class="panel profile-panel"><div><span class="profile-label">Naam</span><strong>'+esc(user.name)+'</strong></div><div><span class="profile-label">E-mailadres</span><strong>'+esc(user.email)+'</strong></div><div><span class="profile-label">Accounttype</span><strong>'+(user.role==="admin"?"Beheerder":"Klant")+'</strong></div><a class="primary inline" href="/account/password">Wachtwoord wijzigen <span>→</span></a><a class="secondary inline" href="/account/security/2fa">E-mailverificatie beheren →</a></div>'+billingForm));
 });
 app.post("/account/billing",requireAuth,async(req,res)=>{
  const user=db.prepare("SELECT id,wc_customer_id FROM users WHERE id=? AND active=1").get(req.session.user.id);
