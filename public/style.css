@@ -144,3 +144,159 @@ textarea{ resize:vertical; }
   .table-wrap td strong{margin-bottom:6px}
   .table-wrap td small{margin-top:5px;font-size:11px}
 }
+
+
+/* Responsive polish across all Supply Panel pages */
+:where(.panel,.stat,.auth-card,.bottom-cta,.payment-box,.reorder-form,.profile-panel){
+  min-width:0;
+  overflow-wrap:anywhere;
+}
+:where(.stack,.profile-panel,.panel) :where(input,select,textarea){
+  min-width:0;
+}
+:where(.primary,.secondary,.danger,button){
+  overflow-wrap:anywhere;
+  text-align:center;
+}
+:where(.hero,.section-head,.bottom-cta,.payment-box,.reorder-form){
+  min-width:0;
+}
+.table-wrap{
+  scrollbar-width:thin;
+  scrollbar-color:#596057 var(--panel);
+  border-radius:2px;
+}
+.table-wrap table{
+  width:100%;
+}
+.table-wrap th,
+.table-wrap td{
+  overflow-wrap:anywhere;
+}
+.order-row{
+  min-width:0;
+}
+.order-row>*{
+  min-width:0;
+  overflow-wrap:anywhere;
+}
+.stack label{
+  min-width:0;
+}
+.stack input,
+.stack select,
+.stack textarea{
+  border-radius:3px;
+}
+@media(max-width:850px){
+  .top nav{
+    align-items:center;
+    row-gap:8px;
+  }
+  .nav-dropdown-menu{
+    max-width:min(260px,calc(100vw - 32px));
+    white-space:normal;
+  }
+  .nav-dropdown-menu a{
+    white-space:normal;
+    overflow-wrap:anywhere;
+  }
+  .order-row{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .row-actions>*{
+    min-width:0;
+  }
+  .table-wrap table{
+    min-width:620px;
+  }
+  .panel{
+    padding:clamp(14px,3vw,20px);
+  }
+}
+@media(max-width:560px){
+  .top{
+    align-items:center;
+  }
+  .top nav{
+    display:flex;
+    flex-wrap:wrap;
+    width:100%;
+    gap:5px 13px;
+  }
+  .top nav a,
+  .nav-dropdown summary{
+    min-height:34px;
+    display:inline-flex;
+    align-items:center;
+  }
+  .account{
+    flex-shrink:0;
+  }
+  .wrap{
+    padding-left:clamp(12px,4vw,18px);
+    padding-right:clamp(12px,4vw,18px);
+  }
+  .page-title,
+  .hero,
+  .section-head{
+    min-width:0;
+  }
+  .page-title h1{
+    overflow-wrap:anywhere;
+  }
+  .stats{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  .order-row{
+    grid-template-columns:minmax(0,1fr);
+  }
+  .row-actions{
+    display:flex;
+    flex-wrap:wrap;
+  }
+  .row-actions a,
+  .row-actions button{
+    min-height:40px;
+  }
+  .stack{
+    gap:13px;
+  }
+  .stack label{
+    gap:6px;
+  }
+  .bottom-cta,
+  .payment-box,
+  .reorder-form{
+    width:100%;
+  }
+  .table-wrap{
+    margin-left:-2px;
+    margin-right:-2px;
+    max-width:calc(100% + 4px);
+  }
+  .table-wrap table{
+    min-width:580px;
+  }
+  footer{
+    overflow-wrap:anywhere;
+  }
+}
+@media(max-width:380px){
+  .stats{
+    grid-template-columns:minmax(0,1fr);
+  }
+  .brand-logo{
+    width:132px;
+  }
+  .account{
+    gap:6px;
+  }
+  .top{
+    padding-left:12px;
+    padding-right:12px;
+  }
+  .table-wrap table{
+    min-width:540px;
+  }
+}
