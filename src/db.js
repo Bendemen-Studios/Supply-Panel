@@ -202,6 +202,14 @@ addColumn("orders", "recurring_order_id", "INTEGER");
 addColumn("orders", "allow_reorder", "INTEGER NOT NULL DEFAULT 1");
 addColumn("orders", "example_image_path", "TEXT");
 db.exec(`
+CREATE TABLE IF NOT EXISTS order_fee_lines (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+ name TEXT NOT NULL,
+ amount_cents INTEGER NOT NULL DEFAULT 0,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_order_fee_lines_order ON order_fee_lines(order_id);
 CREATE TABLE IF NOT EXISTS order_example_images (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
