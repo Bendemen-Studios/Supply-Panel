@@ -153,7 +153,22 @@ async function sendScheduledOrderReminder({ to, order, daysBefore, orderDate, is
   });
 }
 
+
+async function sendSecurityCodeEmail({ to, code, purpose = "login" }) {
+  const setup = purpose === "setup";
+  const intro = setup ? "Gebruik deze code om e-mailverificatie voor je Supply Panel-account in te schakelen." : "Gebruik deze code om in te loggen op je Supply Panel-account.";
+  return transporter().sendMail({
+    from: sender("Beveiliging | Bendemen Supply Panel"), ...mailHeaders(), to,
+    envelope: { from: FROM_ADDRESS, to: [to] },
+    headers: { "X-Mailer": "Bendemen Supply Panel" },
+    subject: (setup ? "Beveiligingscode instellen" : "Je inlogcode") + " | Bendemen Supply Panel",
+    text: intro + "\n\nJe code: " + code + "\n\nDe code is 10 minuten geldig. Deel deze code met niemand.",
+    html: emailLayout("<p>" + intro + "</p><p style=\"font-size:28px;font-weight:bold;letter-spacing:8px\">" + code + "</p><p>De code is 10 minuten geldig. Deel deze code met niemand.</p>")
+  });
+}
+
 module.exports = {
+  sendSecurityCodeEmail,
   sendAutomatedOrderEmail,
   sendScheduledOrderReminder,
   makePdf,
