@@ -78,9 +78,17 @@ async function updateWooOrder(wcOrderId,items,fees=[]){
   if(match)usedFeeIds.add(match.id);
   fee_lines.push({...(match?{id:match.id}:{}),name:fee.name,tax_status:"none",total:(fee.amount_cents/100).toFixed(2)});
  }
- // WooCommerce verwijdert regels niet automatisch wanneer ze ontbreken in een PUT-payload.
- for(const line of oldItems)if(!usedItemIds.has(line.id))line_items.push({id:line.id,delete:true});
- for(const line of oldFees)if(!usedFeeIds.has(line.id))fee_lines.push({id:line.id,delete:true});
+ // Verwijder expliciet via de WooCommerce order-item endpoints. Dit voorkomt
+ // dat een verwijderde regel blijft staan wanneer een PUT-payload delete:true
+ // door een WooCommerce/plugin-versie niet wordt verwerkt.
+ const removedItems=oldItems.filter(line=>!usedItemIds.has(line.id));
+ const removedFees=oldFees.filter(line=>!usedFeeIds.has(line.id));
+ for(const line of removedItems){
+  await request(`orders/${encodeURIComponent(wcOrderId)}/line_items/${encodeURIComponent(line.id)}`,"DELETE");
+ }
+ for(const line of removedFees){
+  await request(`orders/${encodeURIComponent(wcOrderId)}/fee_lines/${encodeURIComponent(line.id)}`,"DELETE");
+ }
  return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{line_items,fee_lines});
 }
 async function updateWooOrderNote(wcOrderId,notes){return request(`orders/${encodeURIComponent(wcOrderId)}`,"PUT",{meta_data:[{key:"_wcpdf_invoice_notes",value:String(notes||"")}]});}
