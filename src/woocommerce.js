@@ -61,11 +61,12 @@ function buildWooLineItem(item,existingLine){
 }
 function findExistingWooLine(item,oldItems,usedItemIds){
  const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
- return oldItems.find(line=>!usedItemIds.has(line.id)&&(
-  wcProductId
-   ? String(line.product_id)===wcProductId&&String(line.name||"").trim()===String(item.product_name||"").trim()
-   : !line.product_id&&String(line.name||"").trim()===String(item.product_name||"").trim()
- ));
+ const sameName=line=>String(line.name||"").trim().toLowerCase()===String(item.product_name||"").trim().toLowerCase();
+ // Prefer the exact WooCommerce product ID. If an older sync used the
+ // Aangepast base product ID, reuse the existing line by its displayed name
+ // rather than appending a second copy of the same product.
+ return oldItems.find(line=>!usedItemIds.has(line.id)&&wcProductId&&String(line.product_id)===wcProductId)
+  ||oldItems.find(line=>!usedItemIds.has(line.id)&&sameName(line));
 }
 async function createWooOrder(order,items,fees=[]){
  const line_items=[],fee_lines=[];
