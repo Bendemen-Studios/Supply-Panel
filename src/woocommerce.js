@@ -49,7 +49,10 @@ function buildWooLineItem(item,existingLine){
  const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
  return {
   ...(existingLine?.id?{id:existingLine.id}:{}),
-  ...(wcProductId?{product_id:Number(wcProductId)}:{}),
+  // WooCommerce orderregel blijft een line_item, ook zonder catalogusproduct.
+  // Gebruik expliciet product_id: 0 voor handmatige/aangepaste producten;
+  // stuur deze nooit als fee_line.
+  product_id:wcProductId?Number(wcProductId):0,
   name:item.product_name,
   quantity:item.quantity,
   subtotal:total,
