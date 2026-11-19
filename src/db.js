@@ -205,6 +205,7 @@ addColumn("orders", "source_order_id", "INTEGER");
 addColumn("orders", "notes", "TEXT");
 addColumn("orders", "recurring_order_id", "INTEGER");
 addColumn("orders", "allow_reorder", "INTEGER NOT NULL DEFAULT 1");
+db.exec("UPDATE orders SET allow_reorder=0 WHERE recurring_order_id IS NOT NULL");
 addColumn("orders", "example_image_path", "TEXT");
 db.exec(`
 CREATE TABLE IF NOT EXISTS order_fee_lines (
