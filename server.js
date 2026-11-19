@@ -103,6 +103,14 @@ app.use((req,res,next)=>{
 });
 function moneyInput(value) { return Math.round(Number(String(value).replace(",", ".")) * 100); }
 function orderItems(orderId) { return db.prepare("SELECT product_id,product_name,quantity,unit_price_cents,meta_data FROM order_items WHERE order_id=?").all(orderId); }
+function cleanProductMeta(raw) {
+ let values=[];try{values=Array.isArray(raw)?raw:JSON.parse(raw||"[]");}catch(_){values=[];}
+ return values.filter(item=>{
+  if(!item||typeof item.key!=="string"||item.value===undefined)return false;
+  const key=item.key.trim().toLowerCase();
+  return !key.startsWith("_")&&!key.startsWith("rank_math")&&!key.startsWith("rank-math")&&!key.startsWith("rankmath");
+ });
+}
 function discardOrderUploads(req) {
  for(const file of req.files||[])if(file&&file.path)fs.unlink(file.path,()=>{});
 }
@@ -992,7 +1000,7 @@ app.post("/admin/products/sync",requireAuth,requireAdmin,async(req,res)=>{
   let pageNo=1,count=0;
   while(true){const list=await woo.listProducts(pageNo,100);if(!list.length)break;
    const upsert=db.prepare("INSERT INTO products (wc_product_id,name,sku,description,price_cents,product_url,image_url,meta_data,source,active,updated_at) VALUES (?,?,?,?,?,?,?,?,'woocommerce',1,CURRENT_TIMESTAMP) ON CONFLICT(wc_product_id) DO UPDATE SET name=excluded.name,sku=excluded.sku,description=excluded.description,price_cents=excluded.price_cents,product_url=excluded.product_url,image_url=excluded.image_url,meta_data=excluded.meta_data,active=1,updated_at=CURRENT_TIMESTAMP");
-   const tx=db.transaction(items=>{for(const p of items){const cents=Math.round(Number(p.price||0)*100);upsert.run(String(p.id),p.name||'Product',p.sku||null,p.description||null,cents,p.permalink||null,p.images&&p.images[0]?p.images[0].src:null,JSON.stringify(Array.isArray(p.meta_data)?p.meta_data:[]));}});
+   const tx=db.transaction(items=>{for(const p of items){const cents=Math.round(Number(p.price||0)*100);upsert.run(String(p.id),p.name||'Product',p.sku||null,p.description||null,cents,p.permalink||null,p.images&&p.images[0]?p.images[0].src:null,JSON.stringify(cleanProductMeta(p.meta_data)));}});
    tx(list);count+=list.length;if(list.length<100)break;pageNo++;
   }
   res.redirect("/admin/products?sync="+count);
