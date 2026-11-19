@@ -51,7 +51,7 @@ function buildWooLineItem(item,existingLine){
   ...(existingLine?.id?{id:existingLine.id}:{}),
   // Iedere productregel moet naar een bestaand WooCommerce-product verwijzen.
   // Aangepaste regels krijgen vooraf een verborgen conceptproduct-ID.
-  product_id:wcProductId?Number(wcProductId):undefined,
+  ...(wcProductId?{product_id:Number(wcProductId)}:{}),
   name:item.product_name,
   quantity:item.quantity,
   subtotal:total,
