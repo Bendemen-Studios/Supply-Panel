@@ -1272,7 +1272,7 @@ app.get("/admin/subscriptions/:id/history",requireAuth,requireAdmin,(req,res)=>{
   const digits=q.replace(/^SUPPLY-/i,"").trim();
   const clauses=["o.wc_order_number LIKE ?","CAST(o.wc_order_id AS TEXT) LIKE ?"];
   const params=[sub.user_id,"%"+q+"%","%"+q+"%"];
-  if(/^\\d+$/.test(digits)){clauses.push("CAST(COALESCE(o.local_order_no,o.id) AS TEXT) LIKE ?");params.push("%"+digits+"%");}
+  if(/^\d+$/.test(digits)){clauses.push("CAST(COALESCE(o.local_order_no,o.id) AS TEXT) LIKE ?");params.push("%"+digits+"%");}
   candidates=db.prepare("SELECT o.id,o.local_order_no,o.wc_order_number,o.created_at,o.total_cents,o.recurring_order_id,(SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary FROM orders o WHERE o.user_id=? AND o.recurring_order_id IS NULL AND ("+clauses.join(" OR ")+") ORDER BY o.id DESC LIMIT 25").all(...params);
  }
  const candidateRows=candidates.map(o=>'<tr><td><strong>'+esc(supplyOrderNumber(o.local_order_no||o.id))+'</strong>'+(o.wc_order_number?'<small>WooCommerce #'+esc(o.wc_order_number)+'</small>':'')+'<small>'+esc(o.created_at)+'</small></td><td>'+esc(o.summary||"Geen orderregels")+'</td><td>'+money(o.total_cents)+'</td><td><form method="post" action="/admin/subscriptions/'+id+'/history/add" onsubmit="return confirm(&quot;Deze bestelling aan dit abonnement koppelen en niet-herbestelbaar maken?&quot;)"><input type="hidden" name="order_id" value="'+o.id+'"><button class="primary">Toevoegen</button></form></td></tr>').join("");
