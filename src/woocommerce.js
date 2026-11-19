@@ -102,7 +102,7 @@ async function updateWooOrder(wcOrderId,items,fees=[]){
  // order-update payload. Losse /fee_lines/{id} DELETE-routes zijn niet
  // beschikbaar op iedere WooCommerce REST-installatie en kunnen 404 geven.
  for(const line of oldItems){
-  if(!usedItemIds.has(line.id))line_items.push({id:line.id,delete:true});
+  if(!usedItemIds.has(line.id))line_items.push({id:line.id,quantity:0});
  }
  for(const line of oldFees){
   if(!usedFeeIds.has(line.id))fee_lines.push({id:line.id,delete:true});
