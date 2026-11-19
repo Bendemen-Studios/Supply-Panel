@@ -296,7 +296,7 @@ function createOrder(userId, lines, sourceOrderId=null, notes="", recurringOrder
   const total=lines.reduce((sum,x)=>sum+x.quantity*x.unit_price_cents,0)+fees.reduce((sum,x)=>sum+x.amount_cents,0);
   const tx=db.transaction(()=>{
     const nextNo=nextFreeSupplyOrderNo();
-    const order=db.prepare("INSERT INTO orders (user_id,status,total_cents,source_order_id,notes,recurring_order_id,local_order_no,show_in_history) VALUES (?,'Nieuw',?,?,?,?,?,1)").run(userId,total,sourceOrderId,notes,recurringOrderId,nextNo);
+    const order=db.prepare("INSERT INTO orders (user_id,status,total_cents,source_order_id,notes,recurring_order_id,local_order_no,show_in_history,allow_reorder) VALUES (?,'Nieuw',?,?,?,?,?,1,?)").run(userId,total,sourceOrderId,notes,recurringOrderId,nextNo,recurringOrderId?0:1);
     const insert=db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents,meta_data) VALUES (?,?,?,?,?,?)");
     for(const x of lines) insert.run(order.lastInsertRowid,x.product_id||null,x.product_name,x.quantity,x.unit_price_cents,"[]");
     const insertFee=db.prepare("INSERT INTO order_fee_lines (order_id,name,amount_cents) VALUES (?,?,?)");
