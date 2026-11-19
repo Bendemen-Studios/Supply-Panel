@@ -129,7 +129,17 @@ function getOrders(userId, limit = 100) {
     (SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary
     FROM orders o WHERE o.user_id=? AND (o.show_in_history=1 OR o.recurring_order_id IS NOT NULL) ORDER BY o.id DESC LIMIT ?`).all(userId, limit);
 }
-async function syncWooOrder(orderId) {
+// Voorkom dat meerdere gelijktijdige triggers dezelfde lokale order tweemaal
+// als nieuwe WooCommerce-order aanmaken wanneer wc_order_id nog niet is opgeslagen.
+const wooOrderSyncInFlight=new Map();
+function syncWooOrder(orderId){
+  const key=Number(orderId);
+  if(wooOrderSyncInFlight.has(key))return wooOrderSyncInFlight.get(key);
+  const task=syncWooOrderInternal(key).finally(()=>wooOrderSyncInFlight.delete(key));
+  wooOrderSyncInFlight.set(key,task);
+  return task;
+}
+async function syncWooOrderInternal(orderId) {
   try {
     const order=db.prepare("SELECT o.*,u.wc_customer_id,u.email customer_email,u.name customer_name,u.billing_first_name,u.billing_last_name,u.billing_company,u.billing_address_1,u.billing_address_2,u.billing_postcode,u.billing_city,u.billing_state,u.billing_country,u.billing_phone FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=?").get(orderId);
     if(!order)throw new Error("Lokale bestelling niet gevonden.");
@@ -158,10 +168,11 @@ async function syncWooOrder(orderId) {
     }
     const items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
     const fees=db.prepare("SELECT name,amount_cents FROM order_fee_lines WHERE order_id=?").all(orderId);
-    const result=order.wc_order_id?await woo.updateWooOrder(order.wc_order_id,items,fees):await woo.createWooOrder(order,items,fees);
+    const isUpdate=Boolean(order.wc_order_id);
+    const result=isUpdate?await woo.updateWooOrder(order.wc_order_id,items,fees):await woo.createWooOrder(order,items,fees);
     if(result?.id){
       db.prepare("UPDATE orders SET wc_order_id=?,wc_order_number=?,wc_status=?,payment_url=? WHERE id=?").run(String(result.id),result.number!=null?String(result.number):null,result.status||"pending",result.payment_url||null,orderId);
-      console.log(`WooCommerce order ${result.id} aangemaakt voor SUPPLY-${order.local_order_no||order.id}`);
+      console.log(`WooCommerce order ${result.id} ${isUpdate?"bijgewerkt":"aangemaakt"} voor SUPPLY-${order.local_order_no||order.id}`);
       try{
         await woo.getInvoicePdf(result.id);
         console.log(`WP Overnight-factuur beschikbaar voor WooCommerce order ${result.id}`);
