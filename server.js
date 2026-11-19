@@ -124,8 +124,14 @@ function recalculateOrderTotal(orderId) {
  return total;
 }
 function displayOrderStatus(o) {
-  if (o.workflow_status === "cancelled" || o.wc_status === "cancelled") return "Geannuleerd";
-  if (["processing","completed"].includes(o.wc_status)) return "In behandeling";
+  const wcStatus=String(o.wc_status||"").toLowerCase();
+  if (o.workflow_status === "cancelled" || ["cancelled","canceled"].includes(wcStatus)) return "Geannuleerd";
+  if (wcStatus === "completed") return "Afgerond";
+  if (wcStatus === "processing") return "In behandeling";
+  if (wcStatus === "pending") return "In afwachting van betaling";
+  if (wcStatus === "on-hold") return "On-hold";
+  if (wcStatus === "refunded") return "Terugbetaald";
+  if (wcStatus === "failed") return "Mislukt";
   return o.wc_status || o.status;
 }
 function orderCard(o) {
