@@ -173,7 +173,17 @@ async function syncWooOrderInternal(orderId) {
         repair.run(String(catalog.wc_product_id),"[]",item.id);
       }
     }
-    const items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
+    let items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
+    // Aangepaste orderregels krijgen een verborgen WooCommerce-conceptproduct.
+    // WooCommerce accepteert geen line_item zonder bestaand product-ID/SKU.
+    for(const item of items){
+      if(!item.product_id||!/^\\d+$/.test(String(item.product_id))){
+        const customProduct=await woo.createCustomOrderProduct(item);
+        if(!customProduct?.id)throw new Error("WooCommerce heeft geen product-ID teruggegeven voor aangepast product: "+item.product_name);
+        db.prepare("UPDATE order_items SET product_id=? WHERE id=?").run(String(customProduct.id),item.id);
+      }
+    }
+    items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
     const fees=db.prepare("SELECT name,amount_cents FROM order_fee_lines WHERE order_id=?").all(orderId);
     const isUpdate=Boolean(order.wc_order_id);
     const result=isUpdate?await woo.updateWooOrder(order.wc_order_id,items,fees):await woo.createWooOrder(order,items,fees);
