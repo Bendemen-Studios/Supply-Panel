@@ -1,4 +1,5 @@
 const axios=require("axios");
+function isWooProductId(value){return /^\\d+$/.test(String(value||""));}
 function config(){const base=(process.env.WC_STORE_URL||"").replace(/\/$/,"");if(!base||!process.env.WC_CONSUMER_KEY||!process.env.WC_CONSUMER_SECRET)throw new Error("WooCommerce API configuration is incomplete");return{base,key:process.env.WC_CONSUMER_KEY,secret:process.env.WC_CONSUMER_SECRET};}
 async function request(endpoint,method="GET",data){
  const c=config(),auth=Buffer.from(c.key+":"+c.secret).toString("base64");
@@ -127,4 +128,4 @@ async function getInvoicePdf(wcOrderId){
  return pdf;
 }
 async function getOrder(wcOrderId){return request(`orders/${encodeURIComponent(wcOrderId)}`);}
-module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createWooOrder,updateWooOrder,updateWooOrderNote,createWooSubscription,refreshWooOrder,getInvoicePdf,refreshInvoicePdf};
+module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createWooOrder,updateWooOrder,updateWooOrderNote,createWooSubscription,refreshWooOrder,getInvoicePdf,refreshInvoicePdf,isWooProductId};
