@@ -986,9 +986,27 @@ app.post("/admin/products/sync",requireAuth,requireAdmin,async(req,res)=>{
   res.redirect("/admin/products?sync="+count);
  }catch(err){console.error("WooCommerce product sync:",err.message);res.status(502).send("WooCommerce synchroniseren is mislukt. Controleer WC_STORE_URL, WC_CONSUMER_KEY en WC_CONSUMER_SECRET in .env.");}
 });
-app.get("/admin/orders/:id/products",requireAuth,requireAdmin,(req,res)=>{
+app.get("/admin/orders/:id/products",requireAuth,requireAdmin,async(req,res)=>{
  const id=Number(req.params.id),order=db.prepare("SELECT o.*,u.name customer_name FROM orders o JOIN users u ON u.id=o.user_id WHERE o.id=?").get(id);if(!order)return res.status(404).send("Bestelling niet gevonden.");
- const products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 ORDER BY name").all(),items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(id);
+ // Herstel automatisch een lege lokale catalogus vanuit WooCommerce, zodat
+ // het mandje direct producten toont zonder eerst Productbeheer te openen.
+ let products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 ORDER BY name").all();
+ if(!products.length){
+  try{
+   let pageNo=1;
+   while(true){
+    const remote=await woo.listProducts(pageNo,100);
+    if(!remote.length)break;
+    const upsert=db.prepare("INSERT INTO products (wc_product_id,name,sku,description,price_cents,product_url,image_url,meta_data,source,active,updated_at) VALUES (?,?,?,?,?,?,?,?,'woocommerce',1,CURRENT_TIMESTAMP) ON CONFLICT(wc_product_id) DO UPDATE SET name=excluded.name,sku=excluded.sku,description=excluded.description,price_cents=excluded.price_cents,product_url=excluded.product_url,image_url=excluded.image_url,meta_data=excluded.meta_data,active=1,updated_at=CURRENT_TIMESTAMP");
+    const tx=db.transaction(rows=>{for(const p of rows){const cents=Math.round(Number(p.price||0)*100);upsert.run(String(p.id),p.name||"Product",p.sku||null,p.description||null,cents,p.permalink||null,p.images&&p.images[0]?p.images[0].src:null,JSON.stringify(Array.isArray(p.meta_data)?p.meta_data:[]));}});
+    tx(remote);
+    if(remote.length<100)break;
+    pageNo++;
+   }
+   products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 ORDER BY name").all();
+  }catch(error){console.error("Automatische WooCommerce-productsync bij orderbewerking mislukt:",error.message);}
+ }
+ const items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(id);
  const options=products.map(p=>'<option value="'+p.id+'" data-price="'+(p.price_cents/100).toFixed(2)+'">'+esc(p.name)+' — '+money(p.price_cents)+'</option>').join("");
  const lines=items.map(x=>{let meta=[];try{meta=Array.isArray(x.meta_data)?x.meta_data:JSON.parse(x.meta_data||"[]");}catch(_){meta=[];}const visibleMeta=meta.filter(m=>m&&typeof m.key==="string"&&!m.key.startsWith("_")).map(m=>'<div class="hint">'+esc(m.key)+': '+esc(typeof m.value==="string"?m.value:JSON.stringify(m.value))+'</div>').join("");return '<tr><td><form method="post" action="/admin/orders/'+id+'/items/'+x.id+'/edit" class="stack"><label>Productnaam / omschrijving<input name="name" maxlength="180" value="'+esc(x.product_name)+'" required></label><label>Aantal<input name="quantity" type="number" min="1" max="999" value="'+x.quantity+'" required></label><label>Prijs per stuk (€)<input name="price" inputmode="decimal" value="'+(x.unit_price_cents/100).toFixed(2).replace(".",",")+'" required></label><label>Productmeta / extra tekst (JSON)<textarea name="meta_data" rows="3">'+esc(JSON.stringify(meta))+'</textarea></label><div class="hint">Zichtbare producttekst: '+(visibleMeta||'Geen zichtbare meta')+'</div><button class="primary">Regel opslaan en synchroniseren</button></form></td><td>'+money(x.quantity*x.unit_price_cents)+'</td><td><form method="post" action="/admin/orders/'+id+'/items/'+x.id+'/delete" onsubmit="return confirm(&quot;Deze orderregel verwijderen?&quot;)"><button class="danger">Verwijderen</button></form></td></tr>';}).join("");
  const exampleImages=db.prepare("SELECT id FROM order_example_images WHERE order_id=? ORDER BY id").all(id);
