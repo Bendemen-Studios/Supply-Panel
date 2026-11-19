@@ -844,7 +844,7 @@ app.post("/admin/orders/:id/invoice/refresh",requireAuth,requireAdmin,async(req,
   await syncWooOrder(id);
   const fresh=db.prepare("SELECT wc_order_id,local_order_no,id FROM orders WHERE id=?").get(id);
   const pdf=await woo.refreshInvoicePdf(fresh?.wc_order_id||order.wc_order_id);
-  const filename=String(pdf.filename||("factuur-SUPPLY-"+(fresh.local_order_no||fresh.id)+".pdf")).replace(/[\\r\\n"\\/\\\\]/g,"_");
+  const filename=String(pdf.filename||("factuur-"+supplyOrderNumber(fresh.local_order_no||fresh.id)+".pdf")).replace(/[\\r\\n"\\/\\\\]/g,"_");
   res.setHeader("Content-Type","application/pdf");
   res.setHeader("Content-Disposition",'attachment; filename="'+filename+'"');
   res.setHeader("Cache-Control","private, no-store");
