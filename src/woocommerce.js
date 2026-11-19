@@ -22,19 +22,6 @@ async function request(endpoint,method="GET",data){
  }
 }
 async function listProducts(page=1,perPage=100){return request(`products?status=any&per_page=${Math.min(100,perPage)}&page=${page}`);}
-async function createCustomOrderProduct(item){
- const price=(Number(item.unit_price_cents||0)/100).toFixed(2);
- return request("products","POST",{
-  name:String(item.product_name||"Aangepast product").slice(0,180),
-  type:"simple",
-  status:"draft",
-  catalog_visibility:"hidden",
-  virtual:true,
-  downloadable:false,
-  regular_price:price,
-  description:"Automatisch aangemaakt door Supply Panel voor een aangepaste orderregel."
- });
-}
 async function searchCustomers(query,page=1){return request(`customers?search=${encodeURIComponent(query)}&per_page=30&page=${page}`);}
 async function getCustomer(id){return request(`customers/${encodeURIComponent(id)}`);}
 async function updateWooCustomerBilling(id,billing){return request(`customers/${encodeURIComponent(id)}`,"PUT",{billing});}
@@ -75,8 +62,9 @@ function buildWooLineItem(item,existingLine){
 function findExistingWooLine(item,oldItems,usedItemIds){
  const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
  return oldItems.find(line=>!usedItemIds.has(line.id)&&(
-  wcProductId?String(line.product_id)===wcProductId:
-   !line.product_id&&String(line.name||"").trim()===String(item.product_name||"").trim()
+  wcProductId
+   ? String(line.product_id)===wcProductId&&String(line.name||"").trim()===String(item.product_name||"").trim()
+   : !line.product_id&&String(line.name||"").trim()===String(item.product_name||"").trim()
  ));
 }
 async function createWooOrder(order,items,fees=[]){
@@ -156,4 +144,4 @@ async function getInvoicePdf(wcOrderId){
  return pdf;
 }
 async function getOrder(wcOrderId){return request(`orders/${encodeURIComponent(wcOrderId)}`);}
-module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createCustomOrderProduct,createWooOrder,updateWooOrder,updateWooOrderNote,createWooSubscription,refreshWooOrder,getInvoicePdf,refreshInvoicePdf,isWooProductId,buildWooLineItem};
+module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createWooOrder,updateWooOrder,updateWooOrderNote,createWooSubscription,refreshWooOrder,getInvoicePdf,refreshInvoicePdf,isWooProductId,buildWooLineItem};
