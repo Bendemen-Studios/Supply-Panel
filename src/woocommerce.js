@@ -106,6 +106,7 @@ async function createWooSubscription(subscription,items){
 }
 async function refreshWooOrder(localOrderId){return null;}
 async function refreshInvoicePdf(wcOrderId){
+ if(!process.env.WPO_WCPDF_API_TOKEN)throw new Error("WPO_WCPDF_API_TOKEN ontbreekt");
  const c=config();
  const response=await axios({url:`${c.base}/wp-json/bendemen/v1/orders/${encodeURIComponent(wcOrderId)}/invoice`,method:"POST",headers:{"X-Bendemen-Invoice-Token":process.env.WPO_WCPDF_API_TOKEN},timeout:60000});
  const data=response.data||{};
