@@ -170,9 +170,7 @@ async function syncWooOrderInternal(orderId) {
           ? db.prepare("SELECT id,wc_product_id,meta_data FROM products WHERE id=?").get(Number(legacyMatch[1]))
           : null;
       if(catalog&&catalog.wc_product_id){
-        let meta=String(item.meta_data||"[]");
-        if(meta==="[]"&&catalog.meta_data)meta=catalog.meta_data;
-        repair.run(String(catalog.wc_product_id),meta,item.id);
+        repair.run(String(catalog.wc_product_id),"[]",item.id);
       }
     }
     const items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
@@ -259,7 +257,7 @@ async function syncDeletedWooOrders(){
       if(localMatch)usedLocalIds.add(localMatch.id);
       let remoteMeta=Array.isArray(item.meta_data)?item.meta_data:[];
       let localMeta=[];try{localMeta=localMatch?JSON.parse(localMatch.meta_data||"[]"):[];}catch(_){localMeta=[];}
-      const metaData=remoteMeta.length?remoteMeta:localMeta;
+      const metaData=[];
       const productName=String(item.name||"").trim()||String(localMatch?.product_name||"WooCommerce regel");
       insert.run(row.id,item.product_id?String(item.product_id):(localMatch?.product_id||null),productName,quantity,unitPriceCents,JSON.stringify(metaData));
      }
@@ -290,7 +288,7 @@ function createOrder(userId, lines, sourceOrderId=null, notes="", recurringOrder
     const nextNo=nextFreeSupplyOrderNo();
     const order=db.prepare("INSERT INTO orders (user_id,status,total_cents,source_order_id,notes,recurring_order_id,local_order_no,show_in_history) VALUES (?,'Nieuw',?,?,?,?,?,1)").run(userId,total,sourceOrderId,notes,recurringOrderId,nextNo);
     const insert=db.prepare("INSERT INTO order_items (order_id,product_id,product_name,quantity,unit_price_cents,meta_data) VALUES (?,?,?,?,?,?)");
-    for(const x of lines) insert.run(order.lastInsertRowid,x.product_id||null,x.product_name,x.quantity,x.unit_price_cents,typeof x.meta_data==="string"?x.meta_data:JSON.stringify(x.meta_data||[]));
+    for(const x of lines) insert.run(order.lastInsertRowid,x.product_id||null,x.product_name,x.quantity,x.unit_price_cents,"[]");
     const insertFee=db.prepare("INSERT INTO order_fee_lines (order_id,name,amount_cents) VALUES (?,?,?)");
     for(const fee of fees) insertFee.run(order.lastInsertRowid,fee.name,fee.amount_cents);
     return Number(order.lastInsertRowid);
@@ -879,7 +877,7 @@ app.post("/admin/orders/new",requireAuth,requireAdmin,orderImageUpload.array("ex
   if(!product){discardOrderUploads(req);return res.status(400).send("Een geselecteerd product is niet meer actief.");}
   if(!Number.isInteger(quantity)||quantity<1||quantity>999){discardOrderUploads(req);return res.status(400).send("Controleer de aantallen. Gebruik minimaal 1 en maximaal 999.");}
   if(!Number.isSafeInteger(price)||price<0||price>100000000){discardOrderUploads(req);return res.status(400).send("Controleer de productprijzen. Gebruik een bedrag tussen € 0,00 en € 1.000.000,00.");}
-  lines.push({product_id:product.wc_product_id?String(product.wc_product_id):"local:"+String(product.id),product_name:product.name,quantity,unit_price_cents:price,meta_data:product.meta_data||"[]"});
+  lines.push({product_id:product.wc_product_id?String(product.wc_product_id):"local:"+String(product.id),product_name:product.name,quantity,unit_price_cents:price,meta_data:"[]"});
  }
  const feeNames=Array.isArray(req.body.fee_name)?req.body.fee_name:[req.body.fee_name].filter(Boolean);
  const feeAmounts=Array.isArray(req.body.fee_amount)?req.body.fee_amount:[req.body.fee_amount].filter(Boolean);
@@ -1051,7 +1049,7 @@ app.get("/admin/orders/:id/products",requireAuth,requireAdmin,async(req,res)=>{
  }
  const items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(id);
  const options=products.map(p=>'<option value="'+p.id+'" data-price="'+(p.price_cents/100).toFixed(2)+'">'+esc(p.name)+' — '+money(p.price_cents)+'</option>').join("");
- const lines=items.map(x=>{let meta=[];try{meta=Array.isArray(x.meta_data)?x.meta_data:JSON.parse(x.meta_data||"[]");}catch(_){meta=[];}const visibleMeta=meta.filter(m=>m&&typeof m.key==="string"&&!m.key.startsWith("_")).map(m=>'<div class="hint">'+esc(m.key)+': '+esc(typeof m.value==="string"?m.value:JSON.stringify(m.value))+'</div>').join("");return '<tr><td><form method="post" action="/admin/orders/'+id+'/items/'+x.id+'/edit" class="stack"><label>Productnaam / omschrijving<input name="name" maxlength="180" value="'+esc(x.product_name)+'" required></label><label>Aantal<input name="quantity" type="number" min="1" max="999" value="'+x.quantity+'" required></label><label>Prijs per stuk (€)<input name="price" inputmode="decimal" value="'+(x.unit_price_cents/100).toFixed(2).replace(".",",")+'" required></label><label>Productmeta / extra tekst (JSON)<textarea name="meta_data" rows="3">'+esc(JSON.stringify(meta))+'</textarea></label><div class="hint">Zichtbare producttekst: '+(visibleMeta||'Geen zichtbare meta')+'</div><button class="primary">Regel opslaan en synchroniseren</button></form></td><td>'+money(x.quantity*x.unit_price_cents)+'</td><td><form method="post" action="/admin/orders/'+id+'/items/'+x.id+'/delete" onsubmit="return confirm(&quot;Deze orderregel verwijderen?&quot;)"><button class="danger">Verwijderen</button></form></td></tr>';}).join("");
+ const lines=items.map(x=>{let meta=[];try{meta=Array.isArray(x.meta_data)?x.meta_data:JSON.parse(x.meta_data||"[]");}catch(_){meta=[];}const visibleMeta=meta.filter(m=>m&&typeof m.key==="string"&&!m.key.startsWith("_")).map(m=>'<div class="hint">'+esc(m.key)+': '+esc(typeof m.value==="string"?m.value:JSON.stringify(m.value))+'</div>').join("");return '<tr><td><form method="post" action="/admin/orders/'+id+'/items/'+x.id+'/edit" class="stack"><label>Productnaam / omschrijving<input name="name" maxlength="180" value="'+esc(x.product_name)+'" required></label><label>Aantal<input name="quantity" type="number" min="1" max="999" value="'+x.quantity+'" required></label><label>Prijs per stuk (€)<input name="price" inputmode="decimal" value="'+(x.unit_price_cents/100).toFixed(2).replace(".",",")+'" required></label><div class="hint">Productmeta: standaard leeg.</div><button class="primary">Regel opslaan en synchroniseren</button></form></td><td>'+money(x.quantity*x.unit_price_cents)+'</td><td><form method="post" action="/admin/orders/'+id+'/items/'+x.id+'/delete" onsubmit="return confirm(&quot;Deze orderregel verwijderen?&quot;)"><button class="danger">Verwijderen</button></form></td></tr>';}).join("");
  const exampleImages=db.prepare("SELECT id FROM order_example_images WHERE order_id=? ORDER BY id").all(id);
  const feeLines=orderFeeLines(id);
  const feeRows=feeLines.map(f=>'<tr><td><form method="post" action="/admin/orders/'+id+'/fees/'+f.id+'/edit" class="row-actions"><input name="name" maxlength="120" value="'+esc(f.name)+'" required><input name="amount" inputmode="decimal" value="'+(f.amount_cents/100).toFixed(2).replace(".",",")+'" required><button class="secondary">Opslaan</button></form></td><td><form method="post" action="/admin/orders/'+id+'/fees/'+f.id+'/delete"><button class="danger">Verwijderen</button></form></td></tr>').join("");
@@ -1123,8 +1121,7 @@ app.post("/admin/orders/:id/items/:itemId/edit",requireAuth,requireAdmin,async(r
  const id=Number(req.params.id),itemId=Number(req.params.itemId),name=String(req.body.name||"").trim().slice(0,180),qty=Number(req.body.quantity),price=moneyInput(req.body.price);
  const item=db.prepare("SELECT oi.id FROM order_items oi WHERE oi.id=? AND oi.order_id=?").get(itemId,id);
  if(!item||!name||!Number.isInteger(qty)||qty<1||qty>999||!Number.isSafeInteger(price)||price<0||price>100000000)return res.status(400).send("Controleer productnaam, aantal en prijs.");
- let meta=[];try{meta=JSON.parse(String(req.body.meta_data||"[]"));}catch(_){return res.status(400).send("Productmeta moet geldige JSON zijn.");}
- if(!Array.isArray(meta)||meta.length>100||meta.some(m=>!m||typeof m.key!=="string"||m.key.length>200||m.value===undefined))return res.status(400).send("Ongeldige productmeta. Gebruik een JSON-lijst met key en value.");
+ const meta=[];
  db.transaction(()=>{
   db.prepare("UPDATE order_items SET product_name=?,quantity=?,unit_price_cents=?,meta_data=? WHERE id=? AND order_id=?").run(name,qty,price,JSON.stringify(meta),itemId,id);
   recalculateOrderTotal(id);
