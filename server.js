@@ -866,7 +866,7 @@ app.post("/admin/orders/:id/invoice/refresh",requireAuth,requireAdmin,async(req,
 
 app.get("/admin/orders/new",requireAuth,requireAdmin,(req,res)=>{
  const customers=db.prepare("SELECT id,name,email FROM users WHERE role='customer' AND active=1 ORDER BY name").all();
- const products=db.prepare("SELECT id,name,sku,price_cents FROM products WHERE active=1 ORDER BY name").all();
+ const products=db.prepare("SELECT id,name,sku,price_cents FROM products WHERE active=1 AND lower(trim(name))<>'aangepast' ORDER BY name").all();
  const customerOptions=customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+' · '+esc(c.email)+'</option>').join("");
  const productRows=products.map(p=>'<tr><td><strong>'+esc(p.name)+'</strong>'+(p.sku?'<small>'+esc(p.sku)+'</small>':'')+'</td><td>'+money(p.price_cents)+'</td><td><button type="button" class="secondary add-to-cart" data-id="'+p.id+'" data-name="'+esc(p.name)+'" data-price="'+(p.price_cents/100).toFixed(2).replace(".",",")+'">＋ Toevoegen</button></td></tr>').join("");
  const body='<a class="back" href="/admin/orders">← Orderoverzicht</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Supply order aanmaken</h1><p>Maak handmatig een nieuwe Supply-bestelling aan voor een klant. Het SUPPLY-ordernummer wordt automatisch toegewezen zodra je de bestelling aanmaakt; je hoeft dit niet zelf in te vullen.</p></div>'+
@@ -1050,12 +1050,12 @@ app.get("/admin/orders/:id/products",requireAuth,requireAdmin,async(req,res)=>{
    pageNo++;
    if(pageNo>100)throw new Error("Productimport afgebroken: meer dan 10.000 producten.");
   }
-  products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 ORDER BY name").all();
+  products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 AND lower(trim(name))<>'aangepast' ORDER BY name").all();
   if(!products.length)catalogError="WooCommerce heeft geen producten teruggegeven. Controleer of de producten gepubliceerd zijn en of de API-sleutels leesrechten hebben.";
  }catch(error){
   catalogError="Producten ophalen uit WooCommerce mislukt: "+String(error.response?.data?.message||error.message).slice(0,240);
   console.error("WooCommerce catalogus vernieuwen bij orderbewerking:",error.response?.data||error.message);
-  products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 ORDER BY name").all();
+  products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 AND lower(trim(name))<>'aangepast' ORDER BY name").all();
  }
  const items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(id);
  const options=products.map(p=>'<option value="'+p.id+'" data-price="'+(p.price_cents/100).toFixed(2)+'">'+esc(p.name)+' — '+money(p.price_cents)+'</option>').join("");
