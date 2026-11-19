@@ -137,7 +137,7 @@ async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
     "",
     paymentLine,
     "",
-    "Heeft u vragen over deze factuur of de betaling? Neem dan gerust contact met ons op.",
+    "Heeft u vragen over deze factuur of de betaling? Mail ons via info@bendemen.nl.",
     "",
     "Met vriendelijke groet,",
     "Team Bendemen"
@@ -149,7 +149,7 @@ async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
     '<p>U kunt uw bestelling bekijken en de betaling veilig afronden via onderstaande knop.</p>' +
     '<p style="margin:26px 0;text-align:center;"><a href="' + escapeHtml(url) + '" style="display:inline-block;padding:14px 24px;background:#20242a;color:#ffffff;text-decoration:none;border-radius:5px;font-weight:bold;">Bekijk en betaal uw factuur</a></p>' +
     '<p>' + paymentLine + '</p>' +
-    '<p>Heeft u vragen over deze factuur of de betaling? Neem dan gerust contact met ons op.</p>' +
+    '<p>Heeft u vragen over deze factuur of de betaling? Neem dan gerust contact met ons op via <a href="mailto:info@bendemen.nl" style="color:#20242a;text-decoration:underline;">info@bendemen.nl</a>.</p>' +
     '<p>Met vriendelijke groet,<br><strong>Team Bendemen</strong></p>'
   );
   return transporter().sendMail({
