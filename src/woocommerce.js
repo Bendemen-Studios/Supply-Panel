@@ -96,6 +96,14 @@ async function createWooSubscription(subscription,items){
  return request("subscriptions","POST",payload);
 }
 async function refreshWooOrder(localOrderId){return null;}
+async function refreshInvoicePdf(wcOrderId){
+ const c=config();
+ const response=await axios({url:`${c.base}/wp-json/bendemen/v1/orders/${encodeURIComponent(wcOrderId)}/invoice`,method:"POST",headers:{"X-Bendemen-Invoice-Token":process.env.WPO_WCPDF_API_TOKEN},timeout:60000});
+ const data=response.data||{};
+ const buffer=Buffer.from(String(data.pdf_base64||""),"base64");
+ if(buffer.subarray(0,5).toString()!=="%PDF-")throw new Error("WP Overnight returned an invalid refreshed PDF");
+ return{buffer,filename:String(data.filename||`invoice-${wcOrderId}.pdf`)};
+}
 async function getInvoicePdf(wcOrderId){
  const c=config();
  if(!process.env.WPO_WCPDF_API_TOKEN)throw new Error("WPO_WCPDF_API_TOKEN ontbreekt");
@@ -111,4 +119,4 @@ async function getInvoicePdf(wcOrderId){
  return pdf;
 }
 async function getOrder(wcOrderId){return request(`orders/${encodeURIComponent(wcOrderId)}`);}
-module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createWooOrder,updateWooOrder,updateWooOrderNote,createWooSubscription,refreshWooOrder,getInvoicePdf};
+module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createWooOrder,updateWooOrder,updateWooOrderNote,createWooSubscription,refreshWooOrder,getInvoicePdf,refreshInvoicePdf};
