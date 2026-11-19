@@ -810,7 +810,7 @@ app.post("/admin/mail/:id/resend",requireAuth,requireAdmin,async(req,res)=>{
 app.post("/admin/orders/refresh",requireAuth,requireAdmin,async(req,res)=>{
  const stats=await syncDeletedWooOrders();
  if(stats.busy)return res.status(409).send("Er loopt al een WooCommerce-synchronisatie. Probeer het zo opnieuw.");
- res.redirect("/admin/orders?refresh_checked="+stats.checked+"&refresh_updated="+stats.updated+"&refresh_removed="+stats.removed+"&refresh_failed="+stats.failed+"&refresh_created="+(stats.created||0)+"&refresh_subscriptions="+(stats.subscriptions||0));
+ res.redirect("/admin/orders?refresh_checked="+stats.checked+"&refresh_updated="+stats.updated+"&refresh_removed="+stats.removed+"&refresh_failed="+stats.failed+"&refresh_created="+(stats.created||0));
 });
 app.post("/admin/orders/:id/resend-email",requireAuth,requireAdmin,async(req,res)=>{
  const id=Number(req.params.id),to=String(req.body.to||"").trim();
