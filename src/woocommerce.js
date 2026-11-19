@@ -32,17 +32,29 @@ function normalizeLineMeta(raw){
  let values=[];try{values=Array.isArray(raw)?raw:JSON.parse(raw||"[]");}catch(_){values=[];}
  return values.filter(x=>x&&typeof x.key==="string"&&!x.key.startsWith("_")&&x.value!==undefined).map(x=>({key:x.key,value:x.value}));
 }
+function buildWooLineItem(item,existingLine){
+ const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
+ const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
+ return {
+  ...(existingLine?.id?{id:existingLine.id}:{}),
+  ...(wcProductId?{product_id:Number(wcProductId)}:{}),
+  name:item.product_name,
+  quantity:item.quantity,
+  subtotal:total,
+  total,
+  meta_data:normalizeLineMeta(item.meta_data)
+ };
+}
+function findExistingWooLine(item,oldItems,usedItemIds){
+ const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
+ return oldItems.find(line=>!usedItemIds.has(line.id)&&(
+  wcProductId?String(line.product_id)===wcProductId:
+   !line.product_id&&String(line.name||"").trim()===String(item.product_name||"").trim()
+ ));
+}
 async function createWooOrder(order,items,fees=[]){
  const line_items=[],fee_lines=[];
- for(const item of items){
-  const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
-  const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
-  if(wcProductId){
-   line_items.push({product_id:Number(wcProductId),quantity:item.quantity,subtotal:total,total,meta_data:normalizeLineMeta(item.meta_data)});
-  }else{
-   fee_lines.push({name:item.quantity>1?`${item.product_name} (aantal: ${item.quantity})`:item.product_name,tax_status:"none",total});
-  }
- }
+ for(const item of items)line_items.push(buildWooLineItem(item));
  for(const fee of fees)fee_lines.push({name:fee.name,tax_status:"none",total:(fee.amount_cents/100).toFixed(2)});
  const payload={
   status:"pending",
@@ -61,18 +73,9 @@ async function updateWooOrder(wcOrderId,items,fees=[]){
  const oldFees=Array.isArray(existing.fee_lines)?existing.fee_lines:[];
  const line_items=[],fee_lines=[],usedItemIds=new Set(),usedFeeIds=new Set();
  for(const item of items){
-  const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
-  const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
-  if(wcProductId){
-   const match=oldItems.find(line=>String(line.product_id)===wcProductId&&!usedItemIds.has(line.id));
-   if(match)usedItemIds.add(match.id);
-   line_items.push({...(match?{id:match.id}:{}),product_id:Number(wcProductId),quantity:item.quantity,subtotal:total,total,meta_data:normalizeLineMeta(item.meta_data)});
-  }else{
-   const name=item.quantity>1?`${item.product_name} (aantal: ${item.quantity})`:item.product_name;
-   const match=oldFees.find(line=>line.name===name&&!usedFeeIds.has(line.id));
-   if(match)usedFeeIds.add(match.id);
-   fee_lines.push({...(match?{id:match.id}:{}),name,tax_status:"none",total});
-  }
+  const match=findExistingWooLine(item,oldItems,usedItemIds);
+  if(match)usedItemIds.add(match.id);
+  line_items.push(buildWooLineItem(item,match));
  }
  for(const fee of fees){
   const match=oldFees.find(line=>line.name===fee.name&&!usedFeeIds.has(line.id));
@@ -97,8 +100,7 @@ async function createWooSubscription(subscription,items){
  const line_items=[],fee_lines=[];
  for(const item of items){
   const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
-  if(wcProductId)line_items.push({product_id:Number(wcProductId),quantity:item.quantity});
-  else fee_lines.push({name:item.quantity>1?`${item.product_name} (aantal: ${item.quantity})`:item.product_name,tax_status:"none",total:(item.quantity*item.unit_price_cents/100).toFixed(2)});
+  line_items.push(buildWooLineItem(item));
  }
  if(!line_items.length&&!fee_lines.length)throw new Error("Abonnement bevat geen regels.");
  const payload={status:"pending",customer_id:subscription.wc_customer_id?Number(subscription.wc_customer_id):0,billing:{email:subscription.customer_email,first_name:subscription.customer_name},billing_period:subscription.interval==="year"?"year":subscription.interval==="week"?"week":"month",billing_interval:1,start_date:subscription.next_payment||new Date().toISOString().slice(0,10),line_items,fee_lines,meta_data:[{key:"_bendemen_supply_panel_subscription",value:"1"},{key:"_bendemen_local_subscription_id",value:String(subscription.id)}]};
@@ -129,4 +131,4 @@ async function getInvoicePdf(wcOrderId){
  return pdf;
 }
 async function getOrder(wcOrderId){return request(`orders/${encodeURIComponent(wcOrderId)}`);}
-module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createWooOrder,updateWooOrder,updateWooOrderNote,createWooSubscription,refreshWooOrder,getInvoicePdf,refreshInvoicePdf,isWooProductId};
+module.exports={request,getOrder,listProducts,searchCustomers,getCustomer,createExpenseOrder,createWooOrder,updateWooOrder,updateWooOrderNote,createWooSubscription,refreshWooOrder,getInvoicePdf,refreshInvoicePdf,isWooProductId,buildWooLineItem};
