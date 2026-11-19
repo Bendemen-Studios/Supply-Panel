@@ -177,7 +177,7 @@ async function syncWooOrderInternal(orderId) {
     // Gebruik het bestaande WooCommerce-product 'Aangepast' (WP product-ID 1029)
     // als technische productreferentie. De orderregelnaam blijft de vrij ingevulde naam.
     const customBaseProductId=String(process.env.WC_CUSTOM_PRODUCT_ID||"1029").trim();
-    if(!/^\\d+$/.test(customBaseProductId))throw new Error("WC_CUSTOM_PRODUCT_ID moet een numeriek WooCommerce-product-ID zijn.");
+    if(!/^\d+$/.test(customBaseProductId))throw new Error("WC_CUSTOM_PRODUCT_ID moet een numeriek WooCommerce-product-ID zijn.");
     for(const item of items){
       if(!item.product_id||!/^\\d+$/.test(String(item.product_id))){
         db.prepare("UPDATE order_items SET product_id=? WHERE id=?").run(customBaseProductId,item.id);
