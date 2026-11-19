@@ -174,13 +174,15 @@ async function syncWooOrderInternal(orderId) {
       }
     }
     let items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
-    // Aangepaste orderregels krijgen een verborgen WooCommerce-conceptproduct.
-    // WooCommerce accepteert geen line_item zonder bestaand product-ID/SKU.
+    // Gebruik het bestaande WooCommerce-product 'Aangepast' als technische
+    // productreferentie. De orderregelnaam blijft de vrij ingevulde productnaam.
+    const customBaseProduct=db.prepare("SELECT id,wc_product_id FROM products WHERE active=1 AND lower(trim(name))='aangepast' AND wc_product_id IS NOT NULL ORDER BY id LIMIT 1").get();
     for(const item of items){
       if(!item.product_id||!/^\\d+$/.test(String(item.product_id))){
-        const customProduct=await woo.createCustomOrderProduct(item);
-        if(!customProduct?.id)throw new Error("WooCommerce heeft geen product-ID teruggegeven voor aangepast product: "+item.product_name);
-        db.prepare("UPDATE order_items SET product_id=? WHERE id=?").run(String(customProduct.id),item.id);
+        if(!customBaseProduct?.wc_product_id){
+          throw new Error("Het WooCommerce-product 'Aangepast' is niet gekoppeld. Synchroniseer eerst de producten en controleer of 'Aangepast' een WooCommerce-product-ID heeft.");
+        }
+        db.prepare("UPDATE order_items SET product_id=? WHERE id=?").run(String(customBaseProduct.wc_product_id),item.id);
       }
     }
     items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
