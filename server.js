@@ -219,6 +219,33 @@ function assignMissingSupplyOrderNumbers(){
 }
 assignMissingSupplyOrderNumbers();
 let orderCleanupRunning=false;
+function getWooSubscriptionId(wcOrder){
+ const values=[];
+ const collect=(rows)=>{for(const item of (Array.isArray(rows)?rows:[])){
+  if(!item||typeof item!=="object")continue;
+  const key=String(item.key||item.name||"").toLowerCase();
+  if(["_subscription_renewal","subscription_renewal","subscription_id","_subscription_id","_subscription"].includes(key)){
+   const value=item.value??item.id;
+   if(value!==undefined&&value!==null&&/^\d+$/.test(String(value)))values.push(String(value));
+  }
+ }};
+ collect(wcOrder?.meta_data);
+ for(const line of (Array.isArray(wcOrder?.line_items)?wcOrder.line_items:[]))collect(line?.meta_data);
+ return values[0]||null;
+}
+function linkWooSubscriptionOrder(localOrder,wcOrder){
+ const subscriptionId=getWooSubscriptionId(wcOrder);
+ if(!subscriptionId)return false;
+ const recurring=db.prepare("SELECT id FROM recurring_orders WHERE wc_subscription_id=? AND user_id=? ORDER BY id DESC LIMIT 1").get(subscriptionId,localOrder.user_id);
+ if(recurring){
+  db.prepare("UPDATE orders SET recurring_order_id=?,allow_reorder=0 WHERE id=? AND (recurring_order_id IS NULL OR recurring_order_id=?)").run(recurring.id,localOrder.id,recurring.id);
+ }else{
+  // Een als renewal gemarkeerde bestelling blijft niet-herbestelbaar,
+  // ook wanneer de abonnementkaart nog niet lokaal aan WooCommerce is gekoppeld.
+  db.prepare("UPDATE orders SET allow_reorder=0 WHERE id=?").run(localOrder.id);
+ }
+ return true;
+}
 async function syncDeletedWooOrders(){
  if(orderCleanupRunning)return {busy:true,checked:0,updated:0,removed:0,failed:0};
  orderCleanupRunning=true;
@@ -234,12 +261,13 @@ async function syncDeletedWooOrders(){
   }
   // Behoud lokale orders zonder WooCommerce-koppeling als WooCommerce tijdelijk niet bereikbaar is. Dit zijn vaak orders
   // waarvan de achtergrond-sync nog loopt of tijdelijk is mislukt.
-  const linked=db.prepare("SELECT id,wc_order_id FROM orders WHERE wc_order_id IS NOT NULL AND wc_order_id != '' ORDER BY id").all();
+  const linked=db.prepare("SELECT id,user_id,wc_order_id,recurring_order_id FROM orders WHERE wc_order_id IS NOT NULL AND wc_order_id != '' ORDER BY id").all();
   for(const row of linked){
    stats.checked++;
    try{
     const wcOrder=await woo.getOrder(row.wc_order_id);
     const items=Array.isArray(wcOrder.line_items)?wcOrder.line_items:[];
+    if(linkWooSubscriptionOrder(row,wcOrder))stats.subscriptions=(stats.subscriptions||0)+1;
     // WooCommerce kan bij een prijsupdate de lokale productomschrijving of
     // zichtbare configuratiemeta niet terugsturen. Bewaar die gegevens dan
     // vanuit de bestaande orderregel in plaats van ze leeg te synchroniseren.
@@ -645,7 +673,7 @@ app.get("/orders/:id",requireAuth,async(req,res)=>{
   const legacyImage=fresh.example_image_path?'<img src="/orders/'+id+'/example-image" alt="Productvoorbeeld" style="max-width:100%;max-height:420px;object-fit:contain;border-radius:10px">':"";
   const exampleImageBlock=(exampleImages.length||legacyImage)?'<div class="panel"><h2>Productvoorbeelden</h2><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px">'+legacyImage+exampleImages.map(img=>'<img src="/orders/'+id+'/example-images/'+img.id+'" alt="Productvoorbeeld" style="width:100%;max-height:320px;object-fit:contain;border-radius:10px">').join("")+'</div></div>':"";
   const invoiceBlock=fresh.wc_order_id&&["pending","on-hold","processing","completed","refunded"].includes(fresh.wc_status)?`<p class="invoice-action"><a class="secondary" href="/orders/${id}/pdf" target="_blank" rel="noopener">Factuur downloaden (PDF) →</a></p>`:"";
-  res.send(page(req,"Bestelling",`<a class="back" href="/orders">← Terug naar bestellingen</a><div class="page-title"><div class="eyebrow">BESTELLING ${supplyOrderNumber(o.local_order_no||id)} · WOOCOMMERCE ${fresh.wc_order_number?esc(fresh.wc_order_number):"Nog niet gekoppeld"}</div><h1>Bestelling bekijken</h1><p>Aangemaakt op ${esc(o.created_at)} · <span class="status">${esc(displayOrderStatus(fresh))}</span></p></div>${payBlock}${invoiceBlock}${exampleImageBlock}${fresh.notes?`<div class="panel"><h2>Notities bij deze bestelling</h2><p style="white-space:pre-wrap">${esc(fresh.notes)}</p></div>`:""}<div class="panel"><div class="table-wrap"><table><thead><tr><th>Product</th><th>Aantal</th><th>Prijs per stuk</th><th>Totaal</th></tr></thead><tbody>${rows}${feeHtml}</tbody></table></div><div class="total-line"><span>Ordertotaal</span><strong>${money(o.total_cents)}</strong></div></div>${!fresh.recurring_order_id&&fresh.allow_reorder!==0?`<form method="post" action="/orders/${id}/reorder" class="reorder-form"><div><strong>Deze bestelling opnieuw bestellen?</strong><p>We maken een nieuwe order aan met dezelfde producten en aantallen.</p><label>Notitie bij herbestelling (optioneel)<textarea name="notes" rows="2" maxlength="2000" placeholder="Bijvoorbeeld: graag dezelfde uitvoering en verpakking"></textarea></label></div><button class="primary">Opnieuw bestellen <span>→</span></button></form>`:`<p class="hint">Dit is een maatwerkbestelling. Opnieuw bestellen is voor deze bestelling uitgeschakeld.</p>`}`));
+  res.send(page(req,"Bestelling",`<a class="back" href="/orders">← Terug naar bestellingen</a><div class="page-title"><div class="eyebrow">BESTELLING ${supplyOrderNumber(o.local_order_no||id)} · WOOCOMMERCE ${fresh.wc_order_number?esc(fresh.wc_order_number):"Nog niet gekoppeld"}</div><h1>Bestelling bekijken</h1><p>Aangemaakt op ${esc(o.created_at)} · <span class="status">${esc(displayOrderStatus(fresh))}</span></p></div>${payBlock}${invoiceBlock}${exampleImageBlock}${fresh.notes?`<div class="panel"><h2>Notities bij deze bestelling</h2><p style="white-space:pre-wrap">${esc(fresh.notes)}</p></div>`:""}<div class="panel"><div class="table-wrap"><table><thead><tr><th>Product</th><th>Aantal</th><th>Prijs per stuk</th><th>Totaal</th></tr></thead><tbody>${rows}${feeHtml}</tbody></table></div><div class="total-line"><span>Ordertotaal</span><strong>${money(o.total_cents)}</strong></div></div>${!fresh.recurring_order_id&&fresh.allow_reorder!==0?`<form method="post" action="/orders/${id}/reorder" class="reorder-form"><div><strong>Deze bestelling opnieuw bestellen?</strong><p>We maken een nieuwe order aan met dezelfde producten en aantallen.</p><label>Notitie bij herbestelling (optioneel)<textarea name="notes" rows="2" maxlength="2000" placeholder="Bijvoorbeeld: graag dezelfde uitvoering en verpakking"></textarea></label></div><button class="primary">Opnieuw bestellen <span>→</span></button></form>`:`<p class="hint">${fresh.recurring_order_id?"Dit is een abonnementsbestelling. Opnieuw bestellen is automatisch uitgeschakeld.":"Opnieuw bestellen is voor deze bestelling uitgeschakeld."}</p>`}`));
 });
 
 app.get("/orders/:id/example-image",requireAuth,(req,res)=>{
@@ -810,7 +838,7 @@ app.post("/admin/mail/:id/resend",requireAuth,requireAdmin,async(req,res)=>{
 app.post("/admin/orders/refresh",requireAuth,requireAdmin,async(req,res)=>{
  const stats=await syncDeletedWooOrders();
  if(stats.busy)return res.status(409).send("Er loopt al een WooCommerce-synchronisatie. Probeer het zo opnieuw.");
- res.redirect("/admin/orders?refresh_checked="+stats.checked+"&refresh_updated="+stats.updated+"&refresh_removed="+stats.removed+"&refresh_failed="+stats.failed+"&refresh_created="+(stats.created||0));
+ res.redirect("/admin/orders?refresh_checked="+stats.checked+"&refresh_updated="+stats.updated+"&refresh_removed="+stats.removed+"&refresh_failed="+stats.failed+"&refresh_created="+(stats.created||0)+"&refresh_subscriptions="+(stats.subscriptions||0));
 });
 app.post("/admin/orders/:id/resend-email",requireAuth,requireAdmin,async(req,res)=>{
  const id=Number(req.params.id),to=String(req.body.to||"").trim();
@@ -924,7 +952,7 @@ app.get("/admin/orders",requireAuth,requireAdmin,(req,res)=>{
  const rows=db.prepare(`SELECT o.id,o.local_order_no,o.created_at,o.total_cents,o.status,o.wc_status,o.wc_order_id,o.wc_order_number,o.payment_url,u.name customer_name,u.email customer_email,COALESCE(NULLIF(r.email_override,''),u.email) mail_recipient,
  (SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary
  FROM orders o JOIN users u ON u.id=o.user_id LEFT JOIN recurring_orders r ON r.id=o.recurring_order_id ORDER BY o.id DESC LIMIT 500`).all();
- const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail door de SMTP-server geaccepteerd.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt: '+esc(req.query.mail_error||"Controleer Mail logs voor de foutmelding.")+'</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + `<style>
+ const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail door de SMTP-server geaccepteerd.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt: '+esc(req.query.mail_error||"Controleer Mail logs voor de foutmelding.")+'</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten. '+esc(req.query.refresh_subscriptions||0)+' abonnementsbestellingen herkend en op niet-herbestelbaar gezet.</div>' : '') + `<style>
 .order-overview-table-wrap{width:100%;overflow:visible}
 .order-overview-table{width:100%;min-width:0!important;display:block;table-layout:auto}
 .order-overview-table thead{display:none}
