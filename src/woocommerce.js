@@ -8,8 +8,16 @@ async function request(endpoint,method="GET",data){
   const response=await axios({url:`${c.base}/wp-json/wc/v3/${endpoint}`,method,data,headers:{Authorization:`Basic ${auth}`},timeout});
   return response.data;
  }catch(err){
-  const detail=err.code||err.response?.status||err.message;
-  console.error("WooCommerce API request failed:",{method,endpoint,code:detail,timeoutMs:timeout,baseUrl:c.base});
+  const responseData=err.response?.data;
+  const detail={
+   code:err.code||null,
+   status:err.response?.status||null,
+   message:err.message,
+   wooCode:responseData?.code||null,
+   wooMessage:responseData?.message||null,
+   wooData:responseData?.data||null
+  };
+  console.error("WooCommerce API request failed:",{method,endpoint,...detail,timeoutMs:timeout,baseUrl:c.base});
   throw err;
  }
 }
