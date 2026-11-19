@@ -46,7 +46,7 @@ function buildWooLineItem(item,existingLine){
   quantity:item.quantity,
   subtotal:total,
   total,
-  meta_data:normalizeLineMeta(item.meta_data)
+  meta_data:[]
  };
 }
 function findExistingWooLine(item,oldItems,usedItemIds){
