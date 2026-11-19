@@ -814,10 +814,21 @@ app.post("/admin/orders/refresh",requireAuth,requireAdmin,async(req,res)=>{
 });
 app.post("/admin/orders/:id/resend-email",requireAuth,requireAdmin,async(req,res)=>{
  const id=Number(req.params.id),to=String(req.body.to||"").trim();
+ if(!Number.isSafeInteger(id)||id<1)return res.status(400).send("Ongeldig ordernummer.");
  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to))return res.status(400).send("Vul een geldig e-mailadres in.");
- const order=loadMailOrder(id);if(!order)return res.status(404).send("Bestelling niet gevonden.");
- const result=await sendLoggedMail({type:"new_order",to,orderId:id});
- res.redirect("/admin/orders?"+(result.success?"mail_resent=1":"mail_failed=1"));
+ const order=loadMailOrder(id);
+ if(!order)return res.status(404).send("Bestelling niet gevonden.");
+ try{
+  const result=await sendLoggedMail({type:"new_order",to,orderId:id});
+  if(!result.success){
+   console.error("Bestellingsmail opnieuw versturen mislukt:",{orderId:id,logId:result.logId||null,error:result.error||"Onbekende verzendfout"});
+   return res.redirect("/admin/orders?mail_failed=1&mail_error="+encodeURIComponent(result.error||"Controleer Mail logs."));
+  }
+  return res.redirect("/admin/orders?mail_resent=1");
+ }catch(error){
+  console.error("Bestellingsmail resend route mislukt:",{orderId:id,error:error.message});
+  return res.redirect("/admin/orders?mail_failed=1&mail_error="+encodeURIComponent(error.message||"Onbekende fout"));
+ }
 });
 
 
@@ -913,7 +924,7 @@ app.get("/admin/orders",requireAuth,requireAdmin,(req,res)=>{
  const rows=db.prepare(`SELECT o.id,o.local_order_no,o.created_at,o.total_cents,o.status,o.wc_status,o.wc_order_id,o.wc_order_number,o.payment_url,u.name customer_name,u.email customer_email,COALESCE(NULLIF(r.email_override,''),u.email) mail_recipient,
  (SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary
  FROM orders o JOIN users u ON u.id=o.user_id LEFT JOIN recurring_orders r ON r.id=o.recurring_order_id ORDER BY o.id DESC LIMIT 500`).all();
- const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail opnieuw verzonden.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt. Controleer de mail logs.</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + `<style>
+ const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail door de SMTP-server geaccepteerd.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt: '+esc(req.query.mail_error||"Controleer Mail logs voor de foutmelding.")+'</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + `<style>
 .order-overview-table-wrap{width:100%;overflow:visible}
 .order-overview-table{width:100%;min-width:0!important;display:block;table-layout:auto}
 .order-overview-table thead{display:none}
