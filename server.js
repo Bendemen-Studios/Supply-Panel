@@ -219,33 +219,6 @@ function assignMissingSupplyOrderNumbers(){
 }
 assignMissingSupplyOrderNumbers();
 let orderCleanupRunning=false;
-function getWooSubscriptionId(wcOrder){
- const values=[];
- const collect=(rows)=>{for(const item of (Array.isArray(rows)?rows:[])){
-  if(!item||typeof item!=="object")continue;
-  const key=String(item.key||item.name||"").toLowerCase();
-  if(["_subscription_renewal","subscription_renewal","subscription_id","_subscription_id","_subscription"].includes(key)){
-   const value=item.value??item.id;
-   if(value!==undefined&&value!==null&&/^\d+$/.test(String(value)))values.push(String(value));
-  }
- }};
- collect(wcOrder?.meta_data);
- for(const line of (Array.isArray(wcOrder?.line_items)?wcOrder.line_items:[]))collect(line?.meta_data);
- return values[0]||null;
-}
-function linkWooSubscriptionOrder(localOrder,wcOrder){
- const subscriptionId=getWooSubscriptionId(wcOrder);
- if(!subscriptionId)return false;
- const recurring=db.prepare("SELECT id FROM recurring_orders WHERE wc_subscription_id=? AND user_id=? ORDER BY id DESC LIMIT 1").get(subscriptionId,localOrder.user_id);
- if(recurring){
-  db.prepare("UPDATE orders SET recurring_order_id=?,allow_reorder=0 WHERE id=? AND (recurring_order_id IS NULL OR recurring_order_id=?)").run(recurring.id,localOrder.id,recurring.id);
- }else{
-  // Een als renewal gemarkeerde bestelling blijft niet-herbestelbaar,
-  // ook wanneer de abonnementkaart nog niet lokaal aan WooCommerce is gekoppeld.
-  db.prepare("UPDATE orders SET allow_reorder=0 WHERE id=?").run(localOrder.id);
- }
- return true;
-}
 async function syncDeletedWooOrders(){
  if(orderCleanupRunning)return {busy:true,checked:0,updated:0,removed:0,failed:0};
  orderCleanupRunning=true;
@@ -267,7 +240,6 @@ async function syncDeletedWooOrders(){
    try{
     const wcOrder=await woo.getOrder(row.wc_order_id);
     const items=Array.isArray(wcOrder.line_items)?wcOrder.line_items:[];
-    if(linkWooSubscriptionOrder(row,wcOrder))stats.subscriptions=(stats.subscriptions||0)+1;
     // WooCommerce kan bij een prijsupdate de lokale productomschrijving of
     // zichtbare configuratiemeta niet terugsturen. Bewaar die gegevens dan
     // vanuit de bestaande orderregel in plaats van ze leeg te synchroniseren.
@@ -952,7 +924,7 @@ app.get("/admin/orders",requireAuth,requireAdmin,(req,res)=>{
  const rows=db.prepare(`SELECT o.id,o.local_order_no,o.created_at,o.total_cents,o.status,o.wc_status,o.wc_order_id,o.wc_order_number,o.payment_url,u.name customer_name,u.email customer_email,COALESCE(NULLIF(r.email_override,''),u.email) mail_recipient,
  (SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary
  FROM orders o JOIN users u ON u.id=o.user_id LEFT JOIN recurring_orders r ON r.id=o.recurring_order_id ORDER BY o.id DESC LIMIT 500`).all();
- const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail door de SMTP-server geaccepteerd.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt: '+esc(req.query.mail_error||"Controleer Mail logs voor de foutmelding.")+'</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten. '+esc(req.query.refresh_subscriptions||0)+' abonnementsbestellingen herkend en op niet-herbestelbaar gezet.</div>' : '') + `<style>
+ const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail door de SMTP-server geaccepteerd.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt: '+esc(req.query.mail_error||"Controleer Mail logs voor de foutmelding.")+'</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten. '</div>' : '') + `<style>
 .order-overview-table-wrap{width:100%;overflow:visible}
 .order-overview-table{width:100%;min-width:0!important;display:block;table-layout:auto}
 .order-overview-table thead{display:none}
@@ -1279,7 +1251,7 @@ app.get("/admin/subscriptions",requireAuth,requireAdmin,(req,res)=>{
  const products=db.prepare("SELECT id,wc_product_id,name,price_cents FROM products WHERE active=1 ORDER BY name").all();
  const options=customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join("");
  const productOptions=products.map(p=>'<label style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:6px"><input type="checkbox" name="product_ids" value="'+p.id+'" style="width:auto;margin:0"><span>'+esc(p.name)+(p.wc_product_id?' · WooCommerce #'+esc(p.wc_product_id):' · Lokaal')+' — '+money(p.price_cents)+'</span></label>').join("")||'<p>Geen actieve producten gevonden. Synchroniseer eerst WooCommerce-producten.</p>';
- const rows=subs.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.customer_name)+'</td><td>'+esc(x.status)+'</td><td>'+money(x.amount_cents)+'</td><td><a class="danger" href="/admin/subscriptions/'+x.id+'/products">Aanpassen</a> <form method="post" action="/admin/subscriptions/'+x.id+'/delete" style="display:inline" onsubmit="return confirm(&quot;Abonnement verwijderen? Bestaande bestellingen blijven behouden.&quot;)"><button class="danger">Verwijderen</button></form></td></tr>').join("");
+ const rows=subs.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+esc(x.customer_name)+'</td><td>'+esc(x.status)+'</td><td>'+money(x.amount_cents)+'</td><td><a class="secondary" href="/admin/subscriptions/'+x.id+'/history">Bekijk historie</a> <a class="danger" href="/admin/subscriptions/'+x.id+'/products">Aanpassen</a> <form method="post" action="/admin/subscriptions/'+x.id+'/delete" style="display:inline" onsubmit="return confirm(&quot;Abonnement verwijderen? Bestaande bestellingen blijven behouden.&quot;)"><button class="danger">Verwijderen</button></form></td></tr>').join("");
  res.send(page(req,"Abonnementen beheren",'<div class="page-title"><h1>Abonnementen</h1><p>Maak een dienst aan voor een bestaande klant.</p></div><div class="panel"><form method="post" action="/admin/subscriptions" class="stack"><label>Klant<select name="user_id" required>'+options+'</select></label><label>Naam dienst<input name="name" maxlength="180" required></label><div class="field"><span class="field-label">Selecteer producten</span><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;max-height:320px;overflow:auto;padding:2px">'+productOptions+'</div></div><label>Aantal per product<input name="quantity" type="number" min="1" max="999" value="1"></label><label>Bedrag per periode<input name="amount" inputmode="decimal" placeholder="Wordt berekend op basis van producten"></label><label>Periode<select name="interval"><option value="month">Maand</option><option value="year">Jaar</option><option value="week">Week</option></select></label><label>Eerste besteldatum<input name="next_payment" type="date" required></label><label>Factuur-/ordernotitie<textarea name="notes" rows="4" maxlength="2000" placeholder="Optioneel. Wordt als klantnotitie op iedere bestelling uit dit abonnement gezet. Laat leeg als je geen notitie wilt."></textarea></label><button class="primary">Abonnement aanmaken</button></form></div><div class="panel"><table><thead><tr><th>Dienst</th><th>Klant</th><th>Status</th><th>Bedrag</th><th></th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">Nog geen abonnementen.</td></tr>')+'</tbody></table></div>'));
 });
 app.post("/admin/subscriptions",requireAuth,requireAdmin,(req,res)=>{
@@ -1288,6 +1260,14 @@ app.post("/admin/subscriptions",requireAuth,requireAdmin,(req,res)=>{
  const total=products.length?products.reduce((sum,p)=>sum+p.price_cents*qty,0):(amount??0);
  const tx=db.transaction(()=>{const result=db.prepare("INSERT INTO recurring_orders (user_id,name,amount_cents,interval,next_payment,notes) VALUES (?,?,?,?,?,?)").run(user.id,name,total,interval,next||null,notes||null);const insert=db.prepare("INSERT INTO recurring_order_items (recurring_order_id,product_id,product_name,quantity,unit_price_cents) VALUES (?,?,?,?,?)");for(const product of products){const recurringProductId=product.wc_product_id?String(product.wc_product_id):"local:"+String(product.id);insert.run(result.lastInsertRowid,recurringProductId,product.name,qty,product.price_cents);}});
  tx();res.redirect("/admin/subscriptions");
+});
+app.get("/admin/subscriptions/:id/history",requireAuth,requireAdmin,(req,res)=>{
+ const id=Number(req.params.id);
+ const sub=db.prepare("SELECT r.id,r.name,u.name customer_name FROM recurring_orders r JOIN users u ON u.id=r.user_id WHERE r.id=?").get(id);
+ if(!sub)return res.status(404).send("Abonnement niet gevonden.");
+ const orders=db.prepare("SELECT o.id,o.local_order_no,o.created_at,o.total_cents,o.status,o.wc_status,(SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary FROM orders o WHERE o.recurring_order_id=? ORDER BY o.id DESC").all(id);
+ const rows=orders.map(o=>'<tr><td><strong>'+esc(supplyOrderNumber(o.local_order_no||o.id))+'</strong><small>'+esc(o.created_at)+'</small></td><td>'+esc(o.summary||"Geen orderregels")+'</td><td>'+esc(displayOrderStatus(o))+'</td><td>'+money(o.total_cents)+'</td><td><a class="textlink" href="/admin/orders/'+o.id+'/products">Bekijk bestelling →</a></td></tr>').join("");
+ res.send(page(req,"Abonnementshistorie",'<a class="back" href="/admin/subscriptions">← Abonnementen</a><div class="page-title"><h1>Historie: '+esc(sub.name)+'</h1><p>'+esc(sub.customer_name)+' · '+orders.length+' bestelling(en)</p></div><div class="panel"><div class="table-wrap"><table><thead><tr><th>Order</th><th>Producten</th><th>Status</th><th>Bedrag</th><th></th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">Er zijn nog geen bestellingen voor dit abonnement.</td></tr>')+'</tbody></table></div></div>'));
 });
 app.get("/admin/subscriptions/:id/products",requireAuth,requireAdmin,(req,res)=>{
  const id=Number(req.params.id),sub=db.prepare("SELECT r.*,u.name customer_name,u.email customer_email FROM recurring_orders r JOIN users u ON u.id=r.user_id WHERE r.id=?").get(id);if(!sub)return res.status(404).send("Abonnement niet gevonden.");
