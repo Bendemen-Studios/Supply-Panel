@@ -106,6 +106,10 @@ function imageAttachments() {
     { filename: "automailfooter.png", path: path.join(publicDir, "automailfooter.png"), cid: "bendemen-mail-footer" }
   ];
 }
+function escapeHtml(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 function sender(displayName) {
   return { name: displayName, address: FROM_ADDRESS };
 }
@@ -117,15 +121,46 @@ function mailHeaders() {
 async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
   const url = orderUrl(order, isTest);
   const attachments = imageAttachments();
+  const number = order.number || order.id;
+  const total = order.total
+    ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: order.currency || "EUR" }).format(Number(order.total))
+    : "";
+  const paymentLine = "Wij verzoeken u vriendelijk om het openstaande bedrag binnen 14 dagen te voldoen.";
+  const text = [
+    "Beste klant,",
+    "",
+    "Uw factuur voor bestelling " + number + " staat klaar om betaald te worden.",
+    total ? "Het factuurbedrag is " + total + "." : "",
+    "",
+    "Via onderstaande link kunt u uw bestelling bekijken en de betaling veilig afronden:",
+    url,
+    "",
+    paymentLine,
+    "",
+    "Heeft u vragen over deze factuur of de betaling? Neem dan gerust contact met ons op.",
+    "",
+    "Met vriendelijke groet,",
+    "Team Bendemen"
+  ].filter(line => line !== "").join("\n");
+  const html = emailLayout(
+    '<p>Beste klant,</p>' +
+    '<p>Uw factuur voor bestelling <strong>' + escapeHtml(number) + '</strong> staat klaar om betaald te worden.</p>' +
+    (total ? '<p>Het factuurbedrag bedraagt <strong>' + escapeHtml(total) + '</strong>.</p>' : '') +
+    '<p>U kunt uw bestelling bekijken en de betaling veilig afronden via onderstaande knop.</p>' +
+    '<p style="margin:26px 0;text-align:center;"><a href="' + escapeHtml(url) + '" style="display:inline-block;padding:14px 24px;background:#20242a;color:#ffffff;text-decoration:none;border-radius:5px;font-weight:bold;">Bekijk en betaal uw factuur</a></p>' +
+    '<p>' + paymentLine + '</p>' +
+    '<p>Heeft u vragen over deze factuur of de betaling? Neem dan gerust contact met ons op.</p>' +
+    '<p>Met vriendelijke groet,<br><strong>Team Bendemen</strong></p>'
+  );
   return transporter().sendMail({
-    from: sender("Factuur aangemaakt | Bendemen Supply Panel"),
+    from: sender("Factuur klaar om te betalen | Bendemen"),
     ...mailHeaders(),
     to,
     envelope: { from: FROM_ADDRESS, to: [to] },
     headers: { "X-Mailer": "Bendemen Supply Panel" },
-    subject: `Bendemen Studios – bestelling #${order.number || order.id}${isTest ? " (test)" : ""}`,
-    text: `Je bestelling staat klaar. Bekijk de bestelling in het Bendemen Supply Panel: ${url}`,
-    html: emailLayout(`<p>Je bestelling staat klaar.</p><p><a href="${url}" style="display:inline-block;padding:12px 18px;background:#20242a;color:#ffffff;text-decoration:none;border-radius:4px;">Bekijk bestelling en betaal veilig</a></p>`),
+    subject: `Uw factuur staat klaar – bestelling #${number}${isTest ? " (test)" : ""}`,
+    text,
+    html,
     attachments
   });
 }
