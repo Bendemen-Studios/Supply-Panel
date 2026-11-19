@@ -181,7 +181,7 @@ function bendemen_wpo_invoice_bridge_render_settings() {
 
 add_action('rest_api_init', function () {
   register_rest_route('bendemen/v1', '/orders/(?P<order_id>\\d+)/invoice', array(
-    'methods' => 'GET',
+    'methods' => array('GET', 'POST'),
     'callback' => function ($request) {
       if (!function_exists('wcpdf_get_document') || !function_exists('wcpdf_get_document_file')) {
         return new WP_Error('wpo_unavailable', 'WP Overnight PDF Invoices is not active or supported.', array('status' => 503));
@@ -210,6 +210,12 @@ add_action('rest_api_init', function () {
         $document = wcpdf_get_document('invoice', $order, true);
         if (!$document) {
           return new WP_Error('invoice_not_allowed', 'WP Overnight does not allow an invoice for this order status. Check the invoice status settings.', array('status' => 409));
+        }
+
+        // POST is the explicit admin refresh action: ask WP Overnight to rebuild
+        // the document PDF before reading the resulting file.
+        if ($request->get_method() === 'POST' && method_exists($document, 'get_pdf')) {
+          $document->get_pdf();
         }
 
         $file = wcpdf_get_document_file($document, 'pdf');
