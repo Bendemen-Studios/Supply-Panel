@@ -174,15 +174,13 @@ async function syncWooOrderInternal(orderId) {
       }
     }
     let items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
-    // Gebruik het bestaande WooCommerce-product 'Aangepast' als technische
-    // productreferentie. De orderregelnaam blijft de vrij ingevulde productnaam.
-    const customBaseProduct=db.prepare("SELECT id,wc_product_id FROM products WHERE active=1 AND lower(trim(name))='aangepast' AND wc_product_id IS NOT NULL ORDER BY id LIMIT 1").get();
+    // Gebruik het bestaande WooCommerce-product 'Aangepast' (WP product-ID 1029)
+    // als technische productreferentie. De orderregelnaam blijft de vrij ingevulde naam.
+    const customBaseProductId=String(process.env.WC_CUSTOM_PRODUCT_ID||"1029").trim();
+    if(!/^\\d+$/.test(customBaseProductId))throw new Error("WC_CUSTOM_PRODUCT_ID moet een numeriek WooCommerce-product-ID zijn.");
     for(const item of items){
       if(!item.product_id||!/^\\d+$/.test(String(item.product_id))){
-        if(!customBaseProduct?.wc_product_id){
-          throw new Error("Het WooCommerce-product 'Aangepast' is niet gekoppeld. Synchroniseer eerst de producten en controleer of 'Aangepast' een WooCommerce-product-ID heeft.");
-        }
-        db.prepare("UPDATE order_items SET product_id=? WHERE id=?").run(String(customBaseProduct.wc_product_id),item.id);
+        db.prepare("UPDATE order_items SET product_id=? WHERE id=?").run(customBaseProductId,item.id);
       }
     }
     items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(orderId);
