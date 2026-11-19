@@ -142,8 +142,8 @@ async function syncWooOrder(orderId) {
       // als local:<products.id>. Zet dit vóór WooCommerce-sync om naar het echte
       // WooCommerce-product-ID zodra dat beschikbaar is; anders wordt het product
       // onterecht als fee-regel aangemaakt en dubbel op de PDF getoond.
-      const localMatch=storedId.match(/^local:(\\d+)$/);
-      const legacyMatch=storedId.match(/^(\\d+)$/);
+      const localMatch=storedId.match(/^local:(\d+)$/);
+      const legacyMatch=storedId.match(/^(\d+)$/);
       const catalog=localMatch
         ? db.prepare("SELECT id,wc_product_id,meta_data FROM products WHERE id=?").get(Number(localMatch[1]))
         : legacyMatch
@@ -383,7 +383,7 @@ app.post("/webhooks/woocommerce", (req,res) => {
   const topic = req.get("x-wc-webhook-topic") || "";
   const isSetupPing = !topic && req.is("application/x-www-form-urlencoded") &&
     req.body && Object.keys(req.body).length === 1 &&
-    /^\\d+$/.test(String(req.body.webhook_id || ""));
+    /^\d+$/.test(String(req.body.webhook_id || ""));
   if (isSetupPing) {
     console.info("WooCommerce webhook setup-ping bevestigd.");
     return res.status(200).json({ received: true, ping: true });
