@@ -1,5 +1,5 @@
 const axios=require("axios");
-function isWooProductId(value){return /^\\d+$/.test(String(value||""));}
+function isWooProductId(value){return /^\d+$/.test(String(value||""));}
 function config(){const base=(process.env.WC_STORE_URL||"").replace(/\/$/,"");if(!base||!process.env.WC_CONSUMER_KEY||!process.env.WC_CONSUMER_SECRET)throw new Error("WooCommerce API configuration is incomplete");return{base,key:process.env.WC_CONSUMER_KEY,secret:process.env.WC_CONSUMER_SECRET};}
 async function request(endpoint,method="GET",data){
  const c=config(),auth=Buffer.from(c.key+":"+c.secret).toString("base64");
@@ -36,7 +36,7 @@ async function createWooOrder(order,items,fees=[]){
  const line_items=[],fee_lines=[];
  for(const item of items){
   const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
-  const wcProductId=item.product_id&&/^\d+$/.test(String(item.product_id))?String(item.product_id):null;
+  const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
   if(wcProductId){
    line_items.push({product_id:Number(wcProductId),quantity:item.quantity,subtotal:total,total,meta_data:normalizeLineMeta(item.meta_data)});
   }else{
@@ -62,7 +62,7 @@ async function updateWooOrder(wcOrderId,items,fees=[]){
  const line_items=[],fee_lines=[],usedItemIds=new Set(),usedFeeIds=new Set();
  for(const item of items){
   const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
-  const wcProductId=item.product_id&&/^\d+$/.test(String(item.product_id))?String(item.product_id):null;
+  const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
   if(wcProductId){
    const match=oldItems.find(line=>String(line.product_id)===wcProductId&&!usedItemIds.has(line.id));
    if(match)usedItemIds.add(match.id);
@@ -96,7 +96,7 @@ async function updateWooOrderNote(wcOrderId,notes){return request(`orders/${enco
 async function createWooSubscription(subscription,items){
  const line_items=[],fee_lines=[];
  for(const item of items){
-  const wcProductId=item.product_id&&/^\d+$/.test(String(item.product_id))?String(item.product_id):null;
+  const wcProductId=item.product_id&&isWooProductId(item.product_id)?String(item.product_id):null;
   if(wcProductId)line_items.push({product_id:Number(wcProductId),quantity:item.quantity});
   else fee_lines.push({name:item.quantity>1?`${item.product_name} (aantal: ${item.quantity})`:item.product_name,tax_status:"none",total:(item.quantity*item.unit_price_cents/100).toFixed(2)});
  }
