@@ -86,14 +86,18 @@ function orderUrl(order, isTest) {
   return base + "/email-login?token=" + encodeURIComponent(encoded + "." + signature);
 }
 
-function emailLayout(content) {
+function emailLayout(content, includeImages = true) {
+  const images = includeImages
+    ? '<tr><td style="padding:0;"><img src="cid:bendemen-mail-header" width="500" alt="Bendemen Studios" style="display:block;width:100%;max-width:500px;height:auto;border:0;margin:0 auto;"></td></tr>'
+      + '<tr><td style="padding:0;"><img src="cid:bendemen-mail-footer" width="500" alt="Bendemen Studios" style="display:block;width:100%;max-width:500px;height:auto;border:0;margin:0 auto;"></td></tr>'
+    : '';
   return `<!doctype html>
 <html lang="nl">
   <body style="margin:0;padding:24px 12px;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#20242a;">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;margin:0 auto;background:#ffffff;border-collapse:collapse;">
-      <tr><td style="padding:0;"><img src="cid:bendemen-mail-header" width="500" alt="Bendemen Studios" style="display:block;width:100%;max-width:500px;height:auto;border:0;margin:0 auto;"></td></tr>
+      ${images.split('<tr><td style="padding:0;"><img src="cid:bendemen-mail-footer"')[0]}
       <tr><td style="padding:28px 30px;line-height:1.6;font-size:15px;">${content}</td></tr>
-      <tr><td style="padding:0;"><img src="cid:bendemen-mail-footer" width="500" alt="Bendemen Studios" style="display:block;width:100%;max-width:500px;height:auto;border:0;margin:0 auto;"></td></tr>
+      ${includeImages ? '<tr><td style="padding:0;"><img src="cid:bendemen-mail-footer" width="500" alt="Bendemen Studios" style="display:block;width:100%;max-width:500px;height:auto;border:0;margin:0 auto;"></td></tr>' : ''}
     </table>
   </body>
 </html>`;
@@ -126,13 +130,24 @@ async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
     ? new Intl.NumberFormat("nl-NL", { style: "currency", currency: order.currency || "EUR" }).format(Number(order.total))
     : "";
   const paymentLine = "Wij verzoeken u vriendelijk om het openstaande bedrag binnen 14 dagen te voldoen.";
+  const items = (order.line_items || []).map(item => ({
+    name: String(item.name || "Product"),
+    quantity: Number(item.quantity || 1)
+  }));
+  const itemText = items.length
+    ? ["Bestelde producten:", ...items.map(item => "- " + item.name + " × " + item.quantity)]
+    : [];
   const text = [
+    "Bendemen Studios",
+    "",
     "Beste klant,",
     "",
     "Uw factuur voor bestelling " + number + " staat klaar om betaald te worden.",
     total ? "Het factuurbedrag is " + total + "." : "",
     "",
-    "Via onderstaande link kunt u uw bestelling bekijken en de betaling veilig afronden:",
+    ...itemText,
+    "",
+    "Bekijk uw bestelling en betaal veilig via deze link:",
     url,
     "",
     paymentLine,
@@ -146,11 +161,14 @@ async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
     '<p>Beste klant,</p>' +
     '<p>Uw factuur voor bestelling <strong>' + escapeHtml(number) + '</strong> staat klaar om betaald te worden.</p>' +
     (total ? '<p>Het factuurbedrag bedraagt <strong>' + escapeHtml(total) + '</strong>.</p>' : '') +
-    '<p>U kunt uw bestelling bekijken en de betaling veilig afronden via onderstaande knop.</p>' +
-    '<p style="margin:26px 0;text-align:center;"><a href="' + escapeHtml(url) + '" style="display:inline-block;padding:14px 24px;background:#20242a;color:#ffffff;text-decoration:none;border-radius:5px;font-weight:bold;">Bekijk en betaal uw factuur</a></p>' +
+    (items.length ? '<p><strong>Overzicht van uw bestelling:</strong></p><ul>' + items.map(item => '<li>' + escapeHtml(item.name) + ' × ' + escapeHtml(item.quantity) + '</li>').join('') + '</ul>' : '') +
+    '<p>U kunt uw bestelling bekijken en de betaling veilig afronden via onderstaande link:</p>' +
+    '<p><a href="' + escapeHtml(url) + '">Bekijk en betaal uw factuur</a></p>' +
+    '<p style="margin:18px 0;text-align:center;"><a href="' + escapeHtml(url) + '" style="display:inline-block;padding:12px 20px;background:#20242a;color:#ffffff;text-decoration:none;border-radius:5px;font-weight:bold;">Bekijk en betaal uw factuur</a></p>' +
     '<p>' + paymentLine + '</p>' +
     '<p>Heeft u vragen over deze factuur of de betaling? Neem dan gerust contact met ons op via <a href="mailto:info@bendemen.nl" style="color:#20242a;text-decoration:underline;">info@bendemen.nl</a>.</p>' +
-    '<p>Met vriendelijke groet,<br><strong>Team Bendemen</strong></p>'
+    '<p>Met vriendelijke groet,<br><strong>Team Bendemen</strong></p>',
+    false
   );
   return transporter().sendMail({
     from: sender("Factuur klaar om te betalen | Bendemen"),
@@ -161,7 +179,7 @@ async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
     subject: `Uw factuur staat klaar – bestelling #${number}${isTest ? " (test)" : ""}`,
     text,
     html,
-    attachments
+    attachments: []
   });
 }
 
