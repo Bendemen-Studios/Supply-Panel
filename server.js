@@ -181,7 +181,7 @@ async function syncWooOrderInternal(orderId) {
     const result=isUpdate?await woo.updateWooOrder(order.wc_order_id,items,fees):await woo.createWooOrder(order,items,fees);
     if(result?.id){
       db.prepare("UPDATE orders SET wc_order_id=?,wc_order_number=?,wc_status=?,payment_url=? WHERE id=?").run(String(result.id),result.number!=null?String(result.number):null,result.status||"pending",result.payment_url||null,orderId);
-      console.log(`WooCommerce order ${result.id} ${isUpdate?"bijgewerkt":"aangemaakt"} voor SUPPLY-${order.local_order_no||order.id}`);
+      console.log(`WooCommerce order ${result.id} ${isUpdate?"bijgewerkt":"aangemaakt"} voor ${supplyOrderNumber(order.local_order_no||order.id)}`);
       try{
         await woo.getInvoicePdf(result.id);
         console.log(`WP Overnight-factuur beschikbaar voor WooCommerce order ${result.id}`);
@@ -823,7 +823,7 @@ app.get("/admin/orders/:id/pdf",requireAuth,requireAdmin,async(req,res)=>{
   await syncWooOrder(id);
   const fresh=db.prepare("SELECT wc_order_id,local_order_no,id FROM orders WHERE id=?").get(id);
   const pdf=await woo.getInvoicePdf(fresh?.wc_order_id||order.wc_order_id);
-  const filename=String(pdf.filename||("factuur-SUPPLY-"+(fresh.local_order_no||fresh.id)+".pdf")).replace(/[\\r\\n"\\/\\\\]/g,"_");
+  const filename=String(pdf.filename||("factuur-"+supplyOrderNumber(fresh.local_order_no||fresh.id)+".pdf")).replace(/[\\r\\n"\\/\\\\]/g,"_");
   res.setHeader("Content-Type","application/pdf");
   res.setHeader("Content-Disposition",'attachment; filename="'+filename+'"');
   res.setHeader("Cache-Control","private, no-store");
@@ -951,7 +951,7 @@ app.get("/admin/customers/:id",requireAuth,requireAdmin,(req,res)=>{
  const id=Number(req.params.id),customer=db.prepare("SELECT * FROM users WHERE id=? AND role='customer'").get(id);
  if(!customer)return res.status(404).send("Klant niet gevonden.");
  const q=String(req.query.q||"").trim().toLowerCase();
- const all=db.prepare(`SELECT o.*, 'SUPPLY-' || COALESCE(o.local_order_no,o.id) order_number,
+ const all=db.prepare(`SELECT o.*, printf('SUPPLY-%03d', COALESCE(o.local_order_no,o.id)) order_number,
  strftime('%d-%m-%Y',o.created_at) date,
  (SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary
  FROM orders o WHERE o.user_id=? ORDER BY o.id DESC`).all(id);
