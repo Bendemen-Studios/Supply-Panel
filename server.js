@@ -76,6 +76,7 @@ app.use(express.static(path.join(__dirname, "public"), {
   }
 }));
 const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false });
+const securityCodeLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false });
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 const euro = cents => new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format((cents || 0) / 100);
 const money = euro;
@@ -506,7 +507,7 @@ app.get("/account/security/2fa",requireAuth,(req,res)=>{
 app.post("/account/security/2fa/skip",requireAuth,(req,res)=>{
  db.prepare("UPDATE users SET email_2fa_prompt_snoozed_until=? WHERE id=?").run(Date.now()+86400000,req.session.user.id);res.redirect(req.session.user.role==="admin"?"/admin":"/");
 });
-app.post("/account/security/2fa/setup",requireAuth,async(req,res)=>{
+app.post("/account/security/2fa/setup",requireAuth,securityCodeLimiter,async(req,res)=>{
  const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1").get(req.session.user.id);if(!user)return res.status(404).send("Account niet gevonden.");
  try{await sendEmail2FACode(user,"setup");res.redirect("/account/security/2fa/verify?sent=1");}
  catch(error){console.error("Email 2FA setup failed:",error.message);res.status(502).send("De verificatiecode kon niet worden verstuurd. Controleer de e-mailinstellingen.");}
@@ -514,7 +515,7 @@ app.post("/account/security/2fa/setup",requireAuth,async(req,res)=>{
 app.get("/account/security/2fa/verify",requireAuth,(req,res)=>{
  res.send(page(req,"Verificatiecode",'<section class="auth-card"><div class="eyebrow">ACCOUNTBEVEILIGING</div><h1>Bevestig je e-mailadres.</h1><p class="sub">Vul de zescijferige code in die we hebben gestuurd.</p>'+(req.query.sent?'<div class="success">Verificatiecode verstuurd.</div>':'')+(req.query.error?'<div class="alert">De code is onjuist of verlopen.</div>':'')+'<form method="post" action="/account/security/2fa/verify" class="stack"><label>Verificatiecode<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label><button class="primary">Bevestigen en inschakelen</button></form><form method="post" action="/account/security/2fa/setup" class="stack"><button class="secondary">Nieuwe code versturen</button></form></section>'));
 });
-app.post("/account/security/2fa/verify",requireAuth,(req,res)=>{
+app.post("/account/security/2fa/verify",requireAuth,securityCodeLimiter,(req,res)=>{
  const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1").get(req.session.user.id);if(!user)return res.status(404).send("Account niet gevonden.");
  if(!validEmail2FACode(req.body.code,user.email_2fa_code_hash,user.email_2fa_expires_at))return res.redirect("/account/security/2fa/verify?error=1");
  db.prepare("UPDATE users SET email_2fa_enabled=1,email_2fa_code_hash=NULL,email_2fa_expires_at=NULL,email_2fa_prompt_snoozed_until=NULL WHERE id=?").run(user.id);res.redirect("/account/security/2fa?enabled=1");
