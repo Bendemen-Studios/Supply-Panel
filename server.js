@@ -1262,12 +1262,32 @@ app.post("/admin/subscriptions",requireAuth,requireAdmin,(req,res)=>{
  tx();res.redirect("/admin/subscriptions");
 });
 app.get("/admin/subscriptions/:id/history",requireAuth,requireAdmin,(req,res)=>{
- const id=Number(req.params.id);
- const sub=db.prepare("SELECT r.id,r.name,u.name customer_name FROM recurring_orders r JOIN users u ON u.id=r.user_id WHERE r.id=?").get(id);
+ const id=Number(req.params.id),q=String(req.query.q||"").trim().slice(0,100);
+ const sub=db.prepare("SELECT r.id,r.user_id,r.name,u.name customer_name FROM recurring_orders r JOIN users u ON u.id=r.user_id WHERE r.id=?").get(id);
  if(!sub)return res.status(404).send("Abonnement niet gevonden.");
- const orders=db.prepare("SELECT o.id,o.local_order_no,o.created_at,o.total_cents,o.status,o.wc_status,(SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary FROM orders o WHERE o.recurring_order_id=? ORDER BY o.id DESC").all(id);
- const rows=orders.map(o=>'<tr><td><strong>'+esc(supplyOrderNumber(o.local_order_no||o.id))+'</strong><small>'+esc(o.created_at)+'</small></td><td>'+esc(o.summary||"Geen orderregels")+'</td><td>'+esc(displayOrderStatus(o))+'</td><td>'+money(o.total_cents)+'</td><td><a class="textlink" href="/admin/orders/'+o.id+'/products">Bekijk bestelling →</a></td></tr>').join("");
- res.send(page(req,"Abonnementshistorie",'<a class="back" href="/admin/subscriptions">← Abonnementen</a><div class="page-title"><h1>Historie: '+esc(sub.name)+'</h1><p>'+esc(sub.customer_name)+' · '+orders.length+' bestelling(en)</p></div><div class="panel"><div class="table-wrap"><table><thead><tr><th>Order</th><th>Producten</th><th>Status</th><th>Bedrag</th><th></th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">Er zijn nog geen bestellingen voor dit abonnement.</td></tr>')+'</tbody></table></div></div>'));
+ const orders=db.prepare("SELECT o.id,o.local_order_no,o.wc_order_number,o.created_at,o.total_cents,o.status,o.wc_status,(SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary FROM orders o WHERE o.recurring_order_id=? ORDER BY o.id DESC").all(id);
+ const rows=orders.map(o=>'<tr><td><strong>'+esc(supplyOrderNumber(o.local_order_no||o.id))+'</strong>'+(o.wc_order_number?'<small>WooCommerce #'+esc(o.wc_order_number)+'</small>':'')+'<small>'+esc(o.created_at)+'</small></td><td>'+esc(o.summary||"Geen orderregels")+'</td><td>'+esc(displayOrderStatus(o))+'</td><td>'+money(o.total_cents)+'</td><td><a class="textlink" href="/admin/orders/'+o.id+'/products">Bekijk bestelling →</a></td></tr>').join("");
+ let candidates=[];
+ if(q){
+  const digits=q.replace(/^SUPPLY-/i,"").trim();
+  const clauses=["o.wc_order_number LIKE ?","CAST(o.wc_order_id AS TEXT) LIKE ?"];
+  const params=[sub.user_id,"%"+q+"%","%"+q+"%"];
+  if(/^\\d+$/.test(digits)){clauses.push("CAST(COALESCE(o.local_order_no,o.id) AS TEXT) LIKE ?");params.push("%"+digits+"%");}
+  candidates=db.prepare("SELECT o.id,o.local_order_no,o.wc_order_number,o.created_at,o.total_cents,o.recurring_order_id,(SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary FROM orders o WHERE o.user_id=? AND o.recurring_order_id IS NULL AND ("+clauses.join(" OR ")+") ORDER BY o.id DESC LIMIT 25").all(...params);
+ }
+ const candidateRows=candidates.map(o=>'<tr><td><strong>'+esc(supplyOrderNumber(o.local_order_no||o.id))+'</strong>'+(o.wc_order_number?'<small>WooCommerce #'+esc(o.wc_order_number)+'</small>':'')+'<small>'+esc(o.created_at)+'</small></td><td>'+esc(o.summary||"Geen orderregels")+'</td><td>'+money(o.total_cents)+'</td><td><form method="post" action="/admin/subscriptions/'+id+'/history/add" onsubmit="return confirm(&quot;Deze bestelling aan dit abonnement koppelen en niet-herbestelbaar maken?&quot;)"><input type="hidden" name="order_id" value="'+o.id+'"><button class="primary">Toevoegen</button></form></td></tr>').join("");
+ const searchPanel='<div class="panel"><h2>Bestelling handmatig toevoegen</h2><p>Zoek op SUPPLY-ordernummer of WooCommerce-ordernummer. Alleen nog niet aan een abonnement gekoppelde bestellingen van '+esc(sub.customer_name)+' worden getoond.</p><form method="get" action="/admin/subscriptions/'+id+'/history" class="row-actions"><input name="q" value="'+esc(q)+'" placeholder="Bijv. SUPPLY-123 of WooCommerce-nummer" maxlength="100" required><button class="primary">Zoeken</button>'+(q?'<a class="textlink" href="/admin/subscriptions/'+id+'/history">Wissen</a>':'')+'</form>'+(q?'<div class="table-wrap"><table><thead><tr><th>Bestelling</th><th>Producten</th><th>Bedrag</th><th></th></tr></thead><tbody>'+(candidateRows||'<tr><td colspan="4">Geen beschikbare bestellingen gevonden voor deze klant.</td></tr>')+'</tbody></table></div>':'')+'</div>';
+ const notice=req.query.added?'<div class="success">Bestelling aan het abonnement gekoppeld en niet-herbestelbaar gemaakt.</div>':req.query.error==="already_linked"?'<div class="alert">Deze bestelling is inmiddels aan een ander abonnement gekoppeld of is al verwerkt.</div>':"";
+ res.send(page(req,"Abonnementshistorie",'<a class="back" href="/admin/subscriptions">← Abonnementen</a><div class="page-title"><h1>Historie: '+esc(sub.name)+'</h1><p>'+esc(sub.customer_name)+' · '+orders.length+' bestelling(en)</p></div>'+notice+searchPanel+'<div class="panel"><h2>Bestelhistorie</h2><div class="table-wrap"><table><thead><tr><th>Order</th><th>Producten</th><th>Status</th><th>Bedrag</th><th></th></tr></thead><tbody>'+(rows||'<tr><td colspan="5">Er zijn nog geen bestellingen voor dit abonnement.</td></tr>')+'</tbody></table></div></div>'));
+});
+app.post("/admin/subscriptions/:id/history/add",requireAuth,requireAdmin,(req,res)=>{
+ const id=Number(req.params.id),orderId=Number(req.body.order_id);
+ const sub=db.prepare("SELECT id,user_id FROM recurring_orders WHERE id=?").get(id);
+ if(!sub)return res.status(404).send("Abonnement niet gevonden.");
+ if(!Number.isSafeInteger(orderId)||orderId<1)return res.status(400).send("Ongeldig ordernummer.");
+ const result=db.prepare("UPDATE orders SET recurring_order_id=?,allow_reorder=0 WHERE id=? AND user_id=? AND recurring_order_id IS NULL").run(id,orderId,sub.user_id);
+ if(!result.changes)return res.redirect("/admin/subscriptions/"+id+"/history?error=already_linked");
+ res.redirect("/admin/subscriptions/"+id+"/history?added=1");
 });
 app.get("/admin/subscriptions/:id/products",requireAuth,requireAdmin,(req,res)=>{
  const id=Number(req.params.id),sub=db.prepare("SELECT r.*,u.name customer_name,u.email customer_email FROM recurring_orders r JOIN users u ON u.id=r.user_id WHERE r.id=?").get(id);if(!sub)return res.status(404).send("Abonnement niet gevonden.");
