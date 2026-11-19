@@ -813,6 +813,27 @@ app.get("/admin/orders/:id/pdf",requireAuth,requireAdmin,async(req,res)=>{
   res.status(err.response?.status===404?404:502).send("De factuur is niet beschikbaar via Invoice Bridge. Controleer of WP Overnight de factuur in WooCommerce heeft aangemaakt.");
  }
 });
+app.post("/admin/orders/:id/invoice/refresh",requireAuth,requireAdmin,async(req,res)=>{
+ const id=Number(req.params.id);
+ if(!Number.isSafeInteger(id)||id<1)return res.status(400).send("Ongeldig ordernummer.");
+ const order=db.prepare("SELECT * FROM orders WHERE id=?").get(id);
+ if(!order||!order.wc_order_id)return res.status(404).send("Geen gekoppelde WooCommerce-factuur gevonden.");
+ if(!["pending","on-hold","processing","completed","refunded"].includes(order.wc_status))return res.status(409).send("Voor deze bestelling is nog geen factuur beschikbaar.");
+ try{
+  await syncWooOrder(id);
+  const fresh=db.prepare("SELECT wc_order_id,local_order_no,id FROM orders WHERE id=?").get(id);
+  const pdf=await woo.refreshInvoicePdf(fresh?.wc_order_id||order.wc_order_id);
+  const filename=String(pdf.filename||("factuur-SUPPLY-"+(fresh.local_order_no||fresh.id)+".pdf")).replace(/[\\r\\n"\\/\\\\]/g,"_");
+  res.setHeader("Content-Type","application/pdf");
+  res.setHeader("Content-Disposition",'attachment; filename="'+filename+'"');
+  res.setHeader("Cache-Control","private, no-store");
+  res.setHeader("Content-Length",pdf.buffer.length);
+  res.send(pdf.buffer);
+ }catch(err){
+  console.error("WP Overnight invoice refresh:",err.message);
+  res.status(err.response?.status===404?404:502).send("Factuur regenereren via WP Overnight is mislukt: "+String(err.response?.data?.message||err.message).slice(0,300));
+ }
+});
 
 app.get("/admin/orders/new",requireAuth,requireAdmin,(req,res)=>{
  const customers=db.prepare("SELECT id,name,email FROM users WHERE role='customer' AND active=1 ORDER BY name").all();
@@ -864,7 +885,7 @@ app.get("/admin/orders",requireAuth,requireAdmin,(req,res)=>{
  (SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary
  FROM orders o JOIN users u ON u.id=o.user_id LEFT JOIN recurring_orders r ON r.id=o.recurring_order_id ORDER BY o.id DESC LIMIT 500`).all();
  const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail opnieuw verzonden.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt. Controleer de mail logs.</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + '<div class="panel table-wrap"><table><thead><tr><th>Lokale order</th><th>Klant</th><th>Producten</th><th>Datum</th><th>Bedrag</th><th>WooCommerce ordernummer</th><th>WooCommerce status</th><th>Factuur</th><th>E-mail</th><th>Beheer</th></tr></thead><tbody>'+
- (rows.map(o=>'<tr><td><strong>SUPPLY-'+String(o.local_order_no||o.id)+'</strong></td><td>'+(String(o.customer_name||"").trim().toLowerCase()===String(o.customer_email||"").trim().toLowerCase()?'<strong>'+esc(o.customer_email)+'</strong>':'<strong>'+esc(o.customer_name)+'</strong><small>'+esc(o.customer_email)+'</small>')+'</td><td>'+esc(o.summary||'Geen orderregels')+'</td><td>'+esc(o.created_at)+'</td><td>'+money(o.total_cents)+'</td><td>'+esc(o.wc_order_number||"Nog niet gekoppeld")+'</td><td>'+esc(o.wc_status||'—')+'</td><td>'+(o.wc_order_id&&["pending","on-hold","processing","completed","refunded"].includes(o.wc_status)?'<a class="secondary" href="/admin/orders/'+o.id+'/pdf">PDF downloaden ↓</a>':'<span class="hint">Nog niet beschikbaar</span>')+'</td><td><form method="post" action="/admin/orders/'+o.id+'/resend-email" class="stack" onsubmit="return confirm(&quot;Bestellingsmail opnieuw versturen?&quot;)"><input type="email" name="to" value="'+esc(o.mail_recipient)+'" required aria-label="Ontvanger e-mail" style="min-width:190px"><button class="secondary">Mail opnieuw sturen</button></form></td><td><a class="textlink" href="/admin/orders/'+o.id+'/products">Aanpassen →</a></td></tr>').join('')||'<tr><td colspan="9">Nog geen bestellingen.</td></tr>')+
+ (rows.map(o=>'<tr><td><strong>SUPPLY-'+String(o.local_order_no||o.id)+'</strong></td><td>'+(String(o.customer_name||"").trim().toLowerCase()===String(o.customer_email||"").trim().toLowerCase()?'<strong>'+esc(o.customer_email)+'</strong>':'<strong>'+esc(o.customer_name)+'</strong><small>'+esc(o.customer_email)+'</small>')+'</td><td>'+esc(o.summary||'Geen orderregels')+'</td><td>'+esc(o.created_at)+'</td><td>'+money(o.total_cents)+'</td><td>'+esc(o.wc_order_number||"Nog niet gekoppeld")+'</td><td>'+esc(o.wc_status||'—')+'</td><td>'+(o.wc_order_id&&["pending","on-hold","processing","completed","refunded"].includes(o.wc_status)?'<div class="stack"><a class="secondary" href="/admin/orders/'+o.id+'/pdf">PDF downloaden ↓</a><form method="post" action="/admin/orders/'+o.id+'/invoice/refresh" onsubmit="return confirm(&quot;De WP Overnight-factuur opnieuw laten genereren en ophalen?&quot;)"><button class="secondary">Factuur regenereren ↻</button></form></div>':'<span class="hint">Nog niet beschikbaar</span>')+'</td><td><form method="post" action="/admin/orders/'+o.id+'/resend-email" class="stack" onsubmit="return confirm(&quot;Bestellingsmail opnieuw versturen?&quot;)"><input type="email" name="to" value="'+esc(o.mail_recipient)+'" required aria-label="Ontvanger e-mail" style="min-width:190px"><button class="secondary">Mail opnieuw sturen</button></form></td><td><a class="textlink" href="/admin/orders/'+o.id+'/products">Aanpassen →</a></td></tr>').join('')||'<tr><td colspan="9">Nog geen bestellingen.</td></tr>')+
  '</tbody></table></div><p class="hint">Toont de laatste 500 lokale bestellingen.</p>';
  res.send(page(req,"Orderoverzicht",body));
 });
