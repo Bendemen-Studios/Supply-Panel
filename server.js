@@ -913,7 +913,40 @@ app.get("/admin/orders",requireAuth,requireAdmin,(req,res)=>{
  const rows=db.prepare(`SELECT o.id,o.local_order_no,o.created_at,o.total_cents,o.status,o.wc_status,o.wc_order_id,o.wc_order_number,o.payment_url,u.name customer_name,u.email customer_email,COALESCE(NULLIF(r.email_override,''),u.email) mail_recipient,
  (SELECT group_concat(oi.quantity || '× ' || oi.product_name, ', ') FROM order_items oi WHERE oi.order_id=o.id) summary
  FROM orders o JOIN users u ON u.id=o.user_id LEFT JOIN recurring_orders r ON r.id=o.recurring_order_id ORDER BY o.id DESC LIMIT 500`).all();
- const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail opnieuw verzonden.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt. Controleer de mail logs.</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + '<div class="panel table-wrap"><table><thead><tr><th>Lokale order</th><th>Klant</th><th>Producten</th><th>Datum</th><th>Bedrag</th><th>WooCommerce ordernummer</th><th>WooCommerce status</th><th>Factuur</th><th>E-mail</th><th>Beheer</th></tr></thead><tbody>'+
+ const body='<a class="back" href="/admin">← Beheer</a><div class="page-title"><div class="eyebrow">BEHEER</div><h1>Orderoverzicht</h1><p>Lokale bestellingen en hun WooCommerce-koppeling.</p><div class="row-actions"><a class="primary" href="/admin/orders/new">＋ Supply order aanmaken</a></div>'+(req.query.mail_resent?'<div class="success">Bestellingsmail opnieuw verzonden.</div>':req.query.mail_failed?'<div class="alert">Verzenden mislukt. Controleer de mail logs.</div>':'')+'<form method="post" action="/admin/orders/refresh" class="row-actions"><button class="primary">Nu synchroniseren ↻</button><span class="hint">Controleert verwijderde orders en haalt ordergegevens opnieuw op.</span></form>' + (req.query.order_created?'<div class="'+(req.query.woo_sync==="ok"?"success":"alert")+'">Bestelling '+esc(req.query.order_number||"")+' aangemaakt en '+(req.query.woo_sync==="ok"?"direct met WooCommerce gesynchroniseerd.":"lokaal opgeslagen. WooCommerce-sync is niet gelukt; de automatische synchronisatie probeert het opnieuw.")+'</div>':'') + (req.query.refresh_checked!==undefined ? '<div class="alert">Synchronisatie klaar: '+esc(req.query.refresh_checked)+' gecontroleerd, '+esc(req.query.created||req.query.refresh_created||0)+' nieuw aangemaakt in WooCommerce, '+esc(req.query.refresh_updated)+' bijgewerkt, '+esc(req.query.refresh_removed)+' verwijderd, '+esc(req.query.refresh_failed)+' fouten.</div>' : '') + '<style>
+.order-overview-table-wrap{overflow-x:auto;width:100%;-webkit-overflow-scrolling:touch}
+.order-overview-table{width:100%;min-width:1120px;table-layout:auto}
+.order-overview-table th,.order-overview-table td{white-space:normal;overflow-wrap:anywhere;vertical-align:middle}
+.order-overview-table td:nth-child(1){min-width:88px}
+.order-overview-table td:nth-child(2){min-width:150px}
+.order-overview-table td:nth-child(3){min-width:180px}
+.order-overview-table td:nth-child(8){min-width:110px}
+.order-overview-table td:nth-child(9){min-width:190px}
+.order-overview-table td:nth-child(10){min-width:100px}
+.order-overview-table input[type=email]{box-sizing:border-box;width:100%;min-width:0!important}
+@media(max-width:760px){
+ .order-overview-table-wrap{overflow:visible}
+ .order-overview-table{min-width:0;display:block}
+ .order-overview-table thead{display:none}
+ .order-overview-table tbody,.order-overview-table tr{display:block;width:100%}
+ .order-overview-table tr{box-sizing:border-box;margin:0 0 16px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+ .order-overview-table td{box-sizing:border-box;display:grid;grid-template-columns:minmax(92px,34%) minmax(0,1fr);gap:10px;width:100%;min-width:0!important;padding:8px 0;border:0;border-bottom:1px solid var(--line);text-align:left;overflow-wrap:anywhere}
+ .order-overview-table td:last-child{border-bottom:0}
+ .order-overview-table td:before{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+ .order-overview-table td:nth-child(1):before{content:"Lokale order"}
+ .order-overview-table td:nth-child(2):before{content:"Klant"}
+ .order-overview-table td:nth-child(3):before{content:"Producten"}
+ .order-overview-table td:nth-child(4):before{content:"Datum"}
+ .order-overview-table td:nth-child(5):before{content:"Bedrag"}
+ .order-overview-table td:nth-child(6):before{content:"WooCommerce order"}
+ .order-overview-table td:nth-child(7):before{content:"Status"}
+ .order-overview-table td:nth-child(8):before{content:"Factuur"}
+ .order-overview-table td:nth-child(9):before{content:"E-mail"}
+ .order-overview-table td:nth-child(10):before{content:"Beheer"}
+ .order-overview-table .stack{min-width:0}
+ .order-overview-table button,.order-overview-table a{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+}
+</style><div class="panel table-wrap order-overview-table-wrap"><table class="order-overview-table"><thead><tr><th>Lokale order</th><th>Klant</th><th>Producten</th><th>Datum</th><th>Bedrag</th><th>WooCommerce ordernummer</th><th>WooCommerce status</th><th>Factuur</th><th>E-mail</th><th>Beheer</th></tr></thead><tbody>'+
  (rows.map(o=>'<tr><td><strong>SUPPLY-'+String(o.local_order_no||o.id)+'</strong></td><td>'+(String(o.customer_name||"").trim().toLowerCase()===String(o.customer_email||"").trim().toLowerCase()?'<strong>'+esc(o.customer_email)+'</strong>':'<strong>'+esc(o.customer_name)+'</strong><small>'+esc(o.customer_email)+'</small>')+'</td><td>'+esc(o.summary||'Geen orderregels')+'</td><td>'+esc(o.created_at)+'</td><td>'+money(o.total_cents)+'</td><td>'+esc(o.wc_order_number||"Nog niet gekoppeld")+'</td><td>'+esc(o.wc_status||'—')+'</td><td>'+(o.wc_order_id&&["pending","on-hold","processing","completed","refunded"].includes(o.wc_status)?'<div class="stack"><a class="secondary" href="/admin/orders/'+o.id+'/pdf">PDF downloaden ↓</a><form method="post" action="/admin/orders/'+o.id+'/invoice/refresh" onsubmit="return confirm(&quot;De WP Overnight-factuur opnieuw laten genereren en ophalen?&quot;)"><button class="secondary">Factuur regenereren ↻</button></form></div>':'<span class="hint">Nog niet beschikbaar</span>')+'</td><td><form method="post" action="/admin/orders/'+o.id+'/resend-email" class="stack" onsubmit="return confirm(&quot;Bestellingsmail opnieuw versturen?&quot;)"><input type="email" name="to" value="'+esc(o.mail_recipient)+'" required aria-label="Ontvanger e-mail" style="min-width:190px"><button class="secondary">Mail opnieuw sturen</button></form></td><td><a class="textlink" href="/admin/orders/'+o.id+'/products">Aanpassen →</a></td></tr>').join('')||'<tr><td colspan="9">Nog geen bestellingen.</td></tr>')+
  '</tbody></table></div><p class="hint">Toont de laatste 500 lokale bestellingen.</p>';
  res.send(page(req,"Orderoverzicht",body));
