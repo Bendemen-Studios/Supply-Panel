@@ -28,9 +28,13 @@ async function createExpenseOrder(expense){
  };
  return request("orders","POST",payload);
 }
+function isExcludedProductMetaKey(key){
+ const normalized=String(key||"").trim().toLowerCase();
+ return normalized.startsWith("_")||normalized.startsWith("rank_math")||normalized.startsWith("rank-math")||normalized.startsWith("rankmath");
+}
 function normalizeLineMeta(raw){
  let values=[];try{values=Array.isArray(raw)?raw:JSON.parse(raw||"[]");}catch(_){values=[];}
- return values.filter(x=>x&&typeof x.key==="string"&&!x.key.startsWith("_")&&x.value!==undefined).map(x=>({key:x.key,value:x.value}));
+ return values.filter(x=>x&&typeof x.key==="string"&&!isExcludedProductMetaKey(x.key)&&x.value!==undefined).map(x=>({key:x.key,value:x.value}));
 }
 function buildWooLineItem(item,existingLine){
  const total=(item.quantity*item.unit_price_cents/100).toFixed(2);
