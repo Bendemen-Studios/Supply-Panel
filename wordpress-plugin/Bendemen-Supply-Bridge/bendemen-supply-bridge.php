@@ -13,9 +13,12 @@ final class Bendemen_Supply_Bridge {
     const VERSION = '1.0.0';
     const OPTION = 'bendemen_supply_bridge_secret';
     const REST_NS = 'bendemen-supply/v1';
+    private static $request_started = [];
 
     public static function boot() {
         add_action('rest_api_init', [__CLASS__, 'register_routes']);
+        add_filter('rest_request_before_callbacks', [__CLASS__, 'mark_request_start'], 10, 3);
+        add_filter('rest_request_after_callbacks', [__CLASS__, 'log_request_duration'], 10, 3);
         add_action('admin_menu', [__CLASS__, 'admin_menu']);
         add_action('admin_init', [__CLASS__, 'register_settings']);
         register_activation_hook(__FILE__, [__CLASS__, 'activate']);
@@ -82,6 +85,9 @@ final class Bendemen_Supply_Bridge {
 
     public static function register_routes() {
         $permission = [__CLASS__, 'authorized'];
+        register_rest_route(self::REST_NS, '/health', [
+            'methods' => 'GET', 'callback' => [__CLASS__, 'health'], 'permission_callback' => $permission,
+        ]);
         register_rest_route(self::REST_NS, '/products', [
             'methods' => 'GET', 'callback' => [__CLASS__, 'products'], 'permission_callback' => $permission,
         ]);
@@ -107,6 +113,41 @@ final class Bendemen_Supply_Bridge {
                 'methods' => 'PUT,POST', 'callback' => [__CLASS__, 'update_order'], 'permission_callback' => $permission,
             ],
         ]);
+    }
+
+
+    public static function mark_request_start($response, $handler, $request) {
+        if (strpos($request->get_route(), '/' . self::REST_NS . '/') === 0) {
+            self::$request_started[spl_object_hash($request)] = microtime(true);
+        }
+        return $response;
+    }
+
+    public static function log_request_duration($response, $handler, $request) {
+        $key = spl_object_hash($request);
+        if (!isset(self::$request_started[$key])) return $response;
+        $duration_ms = (int) round((microtime(true) - self::$request_started[$key]) * 1000);
+        unset(self::$request_started[$key]);
+        if ($response instanceof WP_REST_Response) {
+            $response->header('X-Bendemen-Supply-Duration', (string) $duration_ms);
+        }
+        // Log route and duration only; never log request headers, payloads, or the shared secret.
+        error_log(sprintf('[Bendemen Supply Bridge] %s %s %dms', $request->get_method(), $request->get_route(), $duration_ms));
+        return $response;
+    }
+
+    public static function health($request) {
+        global $wpdb;
+        $db_started = microtime(true);
+        $db_ok = ((string) $wpdb->get_var('SELECT 1') === '1');
+        return [
+            'ok' => $db_ok && class_exists('WooCommerce'),
+            'bridge_version' => self::VERSION,
+            'woocommerce_version' => defined('WC_VERSION') ? WC_VERSION : null,
+            'database' => $db_ok ? 'ok' : 'error',
+            'database_ms' => (int) round((microtime(true) - $db_started) * 1000),
+            'timestamp' => gmdate('c'),
+        ];
     }
 
     public static function products($request) {
