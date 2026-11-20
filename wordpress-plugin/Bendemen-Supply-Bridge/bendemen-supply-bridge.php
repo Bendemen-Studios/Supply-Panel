@@ -59,7 +59,7 @@ final class Bendemen_Supply_Bridge {
                 <?php settings_fields('bendemen_supply_bridge'); ?>
                 <table class="form-table"><tr>
                     <th scope="row"><label for="<?php echo esc_attr(self::OPTION); ?>">Gedeelde geheime sleutel</label></th>
-                    <td><input type="password" autocomplete="new-password" class="regular-text" id="<?php echo esc_attr(self::OPTION); ?>" name="<?php echo esc_attr(self::OPTION); ?>" value="<?php echo esc_attr($secret); ?>" minlength="40" required>
+                    <td><input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" class="regular-text" id="<?php echo esc_attr(self::OPTION); ?>" name="<?php echo esc_attr(self::OPTION); ?>" value="<?php echo esc_attr($secret); ?>" minlength="40" required>
                     <p class="description">Minimaal 40 tekens. De huidige sleutel is automatisch aangemaakt bij activatie.</p></td>
                 </tr></table>
                 <?php submit_button('Sleutel opslaan'); ?>
@@ -214,7 +214,6 @@ final class Bendemen_Supply_Bridge {
         $fees = [];
         foreach ($order->get_items('fee') as $item) $fees[] = ['id' => $item->get_id(), 'name' => $item->get_name(), 'total' => $item->get_total()];
         $billing = [];
-        foreach (['first_name','last_name','company','address_1','address_2','city','state','postcode','country','email','phone'] as $key) $billing[$key] = $order->get_billing_ . $key;
         $billing = [
             'first_name'=>$order->get_billing_first_name(), 'last_name'=>$order->get_billing_last_name(),
             'company'=>$order->get_billing_company(), 'address_1'=>$order->get_billing_address_1(),
