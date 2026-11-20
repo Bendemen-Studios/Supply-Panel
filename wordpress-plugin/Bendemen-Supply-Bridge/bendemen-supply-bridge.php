@@ -133,6 +133,8 @@ final class Bendemen_Supply_Bridge {
             'sale_price' => $product->get_sale_price(),
             'description' => $product->get_description(),
             'short_description' => $product->get_short_description(),
+            'permalink' => get_permalink($product->get_id()),
+            'images' => $product->get_image_id() ? [['id' => $product->get_image_id(), 'src' => wp_get_attachment_url($product->get_image_id())]] : [],
             'stock_status' => $product->get_stock_status(),
             'categories' => array_map(function ($term) { return ['id' => $term->term_id, 'name' => $term->name, 'slug' => $term->slug]; }, $product->get_category_ids() ? get_terms(['taxonomy' => 'product_cat', 'include' => $product->get_category_ids(), 'hide_empty' => false]) : []),
             'meta_data' => self::public_meta($product->get_id()),
