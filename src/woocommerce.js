@@ -1,4 +1,5 @@
 const axios=require("axios");
+const crypto=require("crypto");
 const http=require("http");
 const https=require("https");
 const httpAgent=new http.Agent({keepAlive:true,maxSockets:5,maxFreeSockets:2,timeout:30000});
@@ -34,7 +35,7 @@ async function request(endpoint,method="GET",data){
   throw new Error(responseData?.message||err.message||"Supply Bridge request failed");
  }
 }
-async function listProducts(page=1,perPage=100){return request(`products?status=any&per_page=${Math.min(100,perPage)}&page=${page}`);}
+async function listProducts(page=1,perPage=25){const size=Math.max(1,Math.min(25,Number(perPage)||25));return request(`products?status=any&per_page=${size}&page=${page}`);}
 async function searchCustomers(query,page=1){return request(`customers?search=${encodeURIComponent(query)}&per_page=30&page=${page}`);}
 async function getCustomer(id){return request(`customers/${encodeURIComponent(id)}`);}
 async function updateWooCustomerBilling(id,billing){return request(`customers/${encodeURIComponent(id)}`,"PUT",{billing});}

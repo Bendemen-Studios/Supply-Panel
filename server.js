@@ -116,6 +116,36 @@ function cleanProductMeta(raw) {
   return !key.startsWith("_")&&!key.startsWith("rank_math")&&!key.startsWith("rank-math")&&!key.startsWith("rankmath");
  });
 }
+
+let wooProductSyncPromise=null;
+async function syncWooProductCatalog(){
+ if(wooProductSyncPromise)return wooProductSyncPromise;
+ wooProductSyncPromise=(async()=>{
+  const batchSize=25;
+  const upsert=db.prepare("INSERT INTO products (wc_product_id,name,sku,description,price_cents,product_url,image_url,meta_data,source,active,updated_at) VALUES (?,?,?,?,?,?,?,?,'woocommerce',1,CURRENT_TIMESTAMP) ON CONFLICT(wc_product_id) DO UPDATE SET name=excluded.name,sku=excluded.sku,description=excluded.description,price_cents=excluded.price_cents,product_url=excluded.product_url,image_url=excluded.image_url,meta_data=excluded.meta_data,active=1,updated_at=CURRENT_TIMESTAMP");
+  let pageNo=1,count=0;
+  while(true){
+   const list=await woo.listProducts(pageNo,batchSize);
+   if(!Array.isArray(list))throw new Error("WooCommerce gaf geen geldige productlijst terug.");
+   if(list.length>batchSize)throw new Error("WooCommerce gaf meer producten terug dan gevraagd; synchronisatie afgebroken.");
+   const valid=list.filter(p=>p&&p.id!==undefined&&p.id!==null&&String(p.id)!=="");
+   const tx=db.transaction(items=>{for(const p of items){
+    const numericPrice=Number(p.price||0),cents=Math.round(numericPrice*100);
+    if(!Number.isFinite(cents))throw new Error("Ongeldige productprijs ontvangen voor WooCommerce-product "+p.id+".");
+    upsert.run(String(p.id),p.name||"Product",p.sku||null,p.description||null,cents,p.permalink||null,p.images&&p.images[0]?p.images[0].src:null,JSON.stringify(cleanProductMeta(p.meta_data)));
+   }});
+   tx(valid);count+=valid.length;
+   if(list.length<batchSize)break;
+   pageNo++;
+   if(pageNo>400)throw new Error("Productimport afgebroken: meer dan 10.000 producten.");
+  }
+  console.log("WooCommerce product sync completed:",count,"products");
+  return count;
+ })();
+ try{return await wooProductSyncPromise;}
+ finally{wooProductSyncPromise=null;}
+}
+
 function discardOrderUploads(req) {
  for(const file of req.files||[])if(file&&file.path)fs.unlink(file.path,()=>{});
 }
@@ -1037,45 +1067,21 @@ app.post("/admin/products",requireAuth,requireAdmin,(req,res)=>{
  if(!name||!Number.isSafeInteger(price)||price<0||!Number.isSafeInteger(cost)||cost<0||url&&!/^https?:\/\//i.test(url))return res.status(400).send("Ongeldig product, verkoopprijs of inkoopkosten.");
  db.prepare("INSERT INTO products (name,sku,price_cents,product_url,source) VALUES (?,?,?,?,'manual')").run(name,sku||null,price,url||null);res.redirect("/admin/products");
 });
-let wooProductSyncRunning=false;
 app.post("/admin/products/sync",requireAuth,requireAdmin,async(req,res)=>{
- if(wooProductSyncRunning)return res.status(409).send("Product synchronisatie loopt al. Wacht tot deze klaar is en probeer het daarna opnieuw.");
- wooProductSyncRunning=true;
  try{
-  // Kleine batches beperken de belasting en responstijd op shared hosting.
-  const batchSize=25;
-  let pageNo=1,count=0;
-  while(true){
-   const list=await woo.listProducts(pageNo,batchSize);
-   if(!Array.isArray(list))throw new Error("WooCommerce gaf geen geldige productlijst terug.");
-   if(!list.length)break;
-   const upsert=db.prepare("INSERT INTO products (wc_product_id,name,sku,description,price_cents,product_url,image_url,meta_data,source,active,updated_at) VALUES (?,?,?,?,?,?,?,?,'woocommerce',1,CURRENT_TIMESTAMP) ON CONFLICT(wc_product_id) DO UPDATE SET name=excluded.name,sku=excluded.sku,description=excluded.description,price_cents=excluded.price_cents,product_url=excluded.product_url,image_url=excluded.image_url,meta_data=excluded.meta_data,active=1,updated_at=CURRENT_TIMESTAMP");
-   const tx=db.transaction(items=>{for(const p of items){const cents=Math.round(Number(p.price||0)*100);upsert.run(String(p.id),p.name||'Product',p.sku||null,p.description||null,cents,p.permalink||null,p.images&&p.images[0]?p.images[0].src:null,JSON.stringify(cleanProductMeta(p.meta_data)));}});
-   tx(list);count+=list.length;
-   if(list.length<batchSize)break;
-   pageNo++;
-  }
-  console.log("WooCommerce product sync completed:",count,"products");
+  const count=await syncWooProductCatalog();
   res.redirect("/admin/products?sync="+count);
  }catch(err){console.error("WooCommerce product sync:",err.message);res.status(502).send("Producten synchroniseren is mislukt: "+esc(err.message));}
- finally{wooProductSyncRunning=false;}
 });
 app.post("/admin/orders/:id/products/sync",requireAuth,requireAdmin,async(req,res)=>{
  const id=Number(req.params.id);
  if(!Number.isSafeInteger(id)||id<1||!db.prepare("SELECT id FROM orders WHERE id=?").get(id))return res.status(404).send("Bestelling niet gevonden.");
  try{
-  let pageNo=1,count=0;
-  const upsert=db.prepare("INSERT INTO products (wc_product_id,name,sku,description,price_cents,product_url,image_url,meta_data,source,active,updated_at) VALUES (?,?,?,?,?,?,?,?,'woocommerce',1,CURRENT_TIMESTAMP) ON CONFLICT(wc_product_id) DO UPDATE SET name=excluded.name,sku=excluded.sku,description=excluded.description,price_cents=excluded.price_cents,product_url=excluded.product_url,image_url=excluded.image_url,meta_data=excluded.meta_data,active=1,updated_at=CURRENT_TIMESTAMP");
-  while(true){
-   const list=await woo.listProducts(pageNo,100);
-   if(!Array.isArray(list))throw new Error("WooCommerce gaf geen geldige productlijst terug.");
-   const tx=db.transaction(rows=>{for(const p of rows){if(!p||!p.id)continue;const cents=Math.round(Number(p.price||0)*100);upsert.run(String(p.id),p.name||"Product",p.sku||null,p.description||null,Number.isFinite(cents)?cents:0,p.permalink||null,p.images&&p.images[0]?p.images[0].src:null,JSON.stringify(Array.isArray(p.meta_data)?p.meta_data:[]));}});
-   tx(list);count+=list.length;if(list.length<100)break;if(++pageNo>100)throw new Error("Meer dan 10.000 producten; import afgebroken.");
-  }
+  const count=await syncWooProductCatalog();
   res.redirect("/admin/orders/"+id+"/products?catalog_synced="+count);
  }catch(error){
-  console.error("Handmatige catalogus-sync:",error.response?.data||error.message);
-  res.redirect("/admin/orders/"+id+"/products?catalog_error="+encodeURIComponent(String(error.response?.data?.message||error.message).slice(0,180)));
+  console.error("Handmatige catalogus-sync:",error.message);
+  res.redirect("/admin/orders/"+id+"/products?catalog_error="+encodeURIComponent(String(error.message).slice(0,180)));
  }
 });
 app.get("/admin/orders/:id/products",requireAuth,requireAdmin,async(req,res)=>{
@@ -1084,22 +1090,12 @@ app.get("/admin/orders/:id/products",requireAuth,requireAdmin,async(req,res)=>{
  // lokale records die in WooCommerce gewijzigd zijn weer actueel.
  let products=[],catalogError="";
  try{
-  let pageNo=1,remoteCount=0;
-  const upsert=db.prepare("INSERT INTO products (wc_product_id,name,sku,description,price_cents,product_url,image_url,meta_data,source,active,updated_at) VALUES (?,?,?,?,?,?,?,?,'woocommerce',1,CURRENT_TIMESTAMP) ON CONFLICT(wc_product_id) DO UPDATE SET name=excluded.name,sku=excluded.sku,description=excluded.description,price_cents=excluded.price_cents,product_url=excluded.product_url,image_url=excluded.image_url,meta_data=excluded.meta_data,active=1,updated_at=CURRENT_TIMESTAMP");
-  while(true){
-   const remote=await woo.listProducts(pageNo,100);
-   if(!Array.isArray(remote))throw new Error("WooCommerce API gaf geen productlijst terug.");
-   const tx=db.transaction(rows=>{for(const p of rows){if(!p||!p.id)continue;const cents=Math.round(Number(p.price||0)*100);upsert.run(String(p.id),p.name||"Product",p.sku||null,p.description||null,Number.isFinite(cents)?cents:0,p.permalink||null,p.images&&p.images[0]?p.images[0].src:null,JSON.stringify(Array.isArray(p.meta_data)?p.meta_data:[]));}});
-   tx(remote);remoteCount+=remote.length;
-   if(remote.length<100)break;
-   pageNo++;
-   if(pageNo>100)throw new Error("Productimport afgebroken: meer dan 10.000 producten.");
-  }
+  await syncWooProductCatalog();
   products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 AND lower(trim(name))<>'aangepast' ORDER BY name").all();
-  if(!products.length)catalogError="WooCommerce heeft geen producten teruggegeven. Controleer of de producten gepubliceerd zijn en of de API-sleutels leesrechten hebben.";
+  if(!products.length)catalogError="WooCommerce heeft geen producten teruggegeven. Controleer of de producten gepubliceerd zijn en of de Bridge-productrechten correct zijn ingesteld.";
  }catch(error){
-  catalogError="Producten ophalen uit WooCommerce mislukt: "+String(error.response?.data?.message||error.message).slice(0,240);
-  console.error("WooCommerce catalogus vernieuwen bij orderbewerking:",error.response?.data||error.message);
+  catalogError="Producten ophalen uit WooCommerce mislukt: "+String(error.message||error).slice(0,240);
+  console.error("WooCommerce catalogus vernieuwen bij orderbewerking:",error.message);
   products=db.prepare("SELECT id,name,price_cents FROM products WHERE active=1 AND lower(trim(name))<>'aangepast' ORDER BY name").all();
  }
  const items=db.prepare("SELECT * FROM order_items WHERE order_id=?").all(id);
