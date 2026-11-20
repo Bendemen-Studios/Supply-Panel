@@ -132,7 +132,8 @@ final class Bendemen_Supply_Bridge {
             $response->header('X-Bendemen-Supply-Duration', (string) $duration_ms);
         }
         // Log route and duration only; never log request headers, payloads, or the shared secret.
-        error_log(sprintf('[Bendemen Supply Bridge] %s %s %dms', $request->get_method(), $request->get_route(), $duration_ms));
+        $request_id = preg_replace('/[^a-zA-Z0-9._-]/', '', (string) $request->get_header('x-request-id'));
+        error_log(sprintf('[Bendemen Supply Bridge] %s %s %dms request_id=%s', $request->get_method(), $request->get_route(), $duration_ms, $request_id));
         return $response;
     }
 
