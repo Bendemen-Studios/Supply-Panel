@@ -111,13 +111,18 @@ final class Bendemen_Supply_Bridge {
 
     public static function products($request) {
         $page = max(1, absint($request->get_param('page')));
-        $per_page = min(100, max(1, absint($request->get_param('per_page')) ?: 100));
+        $per_page = min(25, max(1, absint($request->get_param('per_page')) ?: 25));
         $args = [
             'status' => ['publish', 'private', 'draft', 'pending', 'future'],
             'limit' => $per_page, 'page' => $page, 'return' => 'objects',
             'orderby' => 'ID', 'order' => 'ASC',
         ];
+        // Prime caches once per page to avoid repeated metadata/term queries.
         $products = wc_get_products($args);
+        if (!$products) return [];
+        $product_ids = array_map(static function ($product) { return $product->get_id(); }, $products);
+        update_meta_cache('post', $product_ids);
+        update_object_term_cache($product_ids, 'product');
         return array_map([__CLASS__, 'format_product'], $products);
     }
 
