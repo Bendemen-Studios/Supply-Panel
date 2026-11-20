@@ -186,7 +186,7 @@ final class Bendemen_Supply_Bridge {
         $billing = (array) $request->get_param('billing');
         $allowed = ['first_name','last_name','company','address_1','address_2','city','state','postcode','country','phone'];
         foreach ($allowed as $key) if (array_key_exists($key, $billing)) update_user_meta($user_id, 'billing_' . $key, sanitize_text_field((string) $billing[$key]));
-        return self::customer(new WP_REST_Request('GET', '/'));
+        return self::format_customer(get_user_by('id', $user_id));
     }
 
     private static function find_order($id) {
@@ -267,7 +267,7 @@ final class Bendemen_Supply_Bridge {
             } else {
                 if (!$item) $item = new WC_Order_Item_Product();
                 $product_id = absint($line['product_id'] ?? 0);
-                if ($product_id) $item->set_product(wc_get_product($product_id));
+                if ($product_id) { $product = wc_get_product($product_id); if ($product) $item->set_product($product); }
                 $item->set_name(sanitize_text_field($line['name'] ?? 'Product'));
                 $item->set_quantity(max(0, (float) ($line['quantity'] ?? 1)));
                 $item->set_subtotal((float) ($line['subtotal'] ?? $line['total'] ?? 0));
