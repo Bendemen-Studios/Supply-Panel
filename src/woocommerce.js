@@ -4,9 +4,9 @@ const https=require("https");
 const httpAgent=new http.Agent({keepAlive:true,maxSockets:5,maxFreeSockets:2,timeout:30000});
 const httpsAgent=new https.Agent({keepAlive:true,maxSockets:5,maxFreeSockets:2,timeout:30000});
 
-function isWooProductId(value){return /^\\d+$/.test(String(value||""));}
+function isWooProductId(value){return /^\d+$/.test(String(value||""));}
 function config(){
- const base=(process.env.WC_STORE_URL||"").replace(/\\/$/,"");
+ const base=(process.env.WC_STORE_URL||"").replace(/\/$/,"");
  const secret=process.env.WC_BRIDGE_SECRET||"";
  if(!base||secret.length<40)throw new Error("Supply Bridge-configuratie ontbreekt. Stel WC_STORE_URL en WC_BRIDGE_SECRET in.");
  return{base,secret};
@@ -16,7 +16,7 @@ async function request(endpoint,method="GET",data){
  const timeout=Math.max(5000,Math.min(120000,Number(process.env.WC_API_TIMEOUT_MS)||20000));
  try{
   const response=await axios({
-   url:`${c.base}/wp-json/bendemen-supply/v1/${String(endpoint).replace(/^\\//,"")}`,
+   url:`${c.base}/wp-json/bendemen-supply/v1/${String(endpoint).replace(/^\//,"")}`,
    method,data,headers:{"X-Bendemen-Supply-Key":c.secret,"Content-Type":"application/json"},
    timeout,httpAgent,httpsAgent,maxRedirects:3
   });
