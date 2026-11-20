@@ -75,8 +75,12 @@ app.use(express.static(path.join(__dirname, "public"), {
     else res.setHeader("Cache-Control", "public, max-age=3600, stale-while-revalidate=300");
   }
 }));
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false });
-const securityCodeLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: true, legacyHeaders: false });
+// Ruimere, gescheiden limieten voorkomen dat normale login- en 2FA-stappen
+// elkaar blokkeren. Limieten blijven per IP en beschermen tegen brute force.
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 12, standardHeaders: true, legacyHeaders: false });
+const twoFactorLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 12, standardHeaders: true, legacyHeaders: false });
+const twoFactorResendLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 6, standardHeaders: true, legacyHeaders: false });
+const securityCodeLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 const euro = cents => new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format((cents || 0) / 100);
 const money = euro;
@@ -514,7 +518,7 @@ app.get("/login/2fa",(req,res)=>{
  if(!req.session.pendingEmail2FA)return res.redirect("/login");
  res.send(page(req,"E-mailcode",'<section class="auth-card"><div class="eyebrow">EXTRA BEVEILIGING</div><h1>Controleer je e-mail.</h1><p class="sub">We hebben een zescijferige inlogcode gestuurd naar je accountadres.</p>'+(req.query.error?'<div class="alert">De code is onjuist of verlopen.</div>':'')+'<form method="post" action="/login/2fa" class="stack"><label>Beveiligingscode<input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required></label><button class="primary">Inloggen</button></form><form method="post" action="/login/2fa/resend" class="stack"><button class="secondary">Nieuwe code versturen</button></form></section>'));
 });
-app.post("/login/2fa",loginLimiter,(req,res)=>{
+app.post("/login/2fa",twoFactorLimiter,(req,res)=>{
  const pending=req.session.pendingEmail2FA;
  if(!pending||pending.expiresAt<Date.now())return res.redirect("/login?error=1");
  const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1 AND email_2fa_enabled=1").get(pending.userId);
@@ -527,7 +531,7 @@ app.post("/login/2fa",loginLimiter,(req,res)=>{
  db.prepare("UPDATE users SET email_2fa_code_hash=NULL,email_2fa_expires_at=NULL WHERE id=?").run(user.id);
  delete req.session.pendingEmail2FA;authenticatedUser(req,user);res.redirect(user.role==="admin"?"/admin":"/");
 });
-app.post("/login/2fa/resend",loginLimiter,async(req,res)=>{
+app.post("/login/2fa/resend",twoFactorResendLimiter,async(req,res)=>{
  const pending=req.session.pendingEmail2FA;if(!pending||pending.expiresAt<Date.now())return res.redirect("/login");
  const user=db.prepare("SELECT * FROM users WHERE id=? AND active=1 AND email_2fa_enabled=1").get(pending.userId);
  if(!user)return res.redirect("/login");
