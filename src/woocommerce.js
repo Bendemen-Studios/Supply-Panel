@@ -1,11 +1,15 @@
 const axios=require("axios");
+const http=require("http");
+const https=require("https");
+const httpAgent=new http.Agent({keepAlive:true,maxSockets:5,maxFreeSockets:2,timeout:30000});
+const httpsAgent=new https.Agent({keepAlive:true,maxSockets:5,maxFreeSockets:2,timeout:30000});
 function isWooProductId(value){return /^\d+$/.test(String(value||""));}
 function config(){const base=(process.env.WC_STORE_URL||"").replace(/\/$/,"");if(!base||!process.env.WC_CONSUMER_KEY||!process.env.WC_CONSUMER_SECRET)throw new Error("WooCommerce API configuration is incomplete");return{base,key:process.env.WC_CONSUMER_KEY,secret:process.env.WC_CONSUMER_SECRET};}
 async function request(endpoint,method="GET",data){
  const c=config(),auth=Buffer.from(c.key+":"+c.secret).toString("base64");
- const timeout=Math.max(5000,Math.min(120000,Number(process.env.WC_API_TIMEOUT_MS)||60000));
+ const timeout=Math.max(5000,Math.min(120000,Number(process.env.WC_API_TIMEOUT_MS)||20000));
  try{
-  const response=await axios({url:`${c.base}/wp-json/wc/v3/${endpoint}`,method,data,headers:{Authorization:`Basic ${auth}`},timeout});
+  const response=await axios({url:`${c.base}/wp-json/wc/v3/${endpoint}`,method,data,headers:{Authorization:`Basic ${auth}`},timeout,httpAgent,httpsAgent,maxRedirects:3});
   return response.data;
  }catch(err){
   const responseData=err.response?.data;
