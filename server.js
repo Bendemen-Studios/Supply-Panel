@@ -235,7 +235,7 @@ async function syncDeletedWooOrders(){
  const stats={busy:false,checked:0,updated:0,removed:0,failed:0,created:0};
  try{
   // Probeer eerst alle lokale orders zonder WooCommerce-koppeling alsnog naar WooCommerce te sturen.
-  const pending=db.prepare("SELECT id FROM orders WHERE wc_order_id IS NULL OR wc_order_id='' ORDER BY id").all();
+  const pending=db.prepare("SELECT id FROM orders WHERE wc_order_id IS NULL OR wc_order_id='' ORDER BY id DESC LIMIT 5").all();
   for(const row of pending){
    stats.checked++;
    const result=await syncWooOrder(row.id);
@@ -244,7 +244,7 @@ async function syncDeletedWooOrders(){
   }
   // Behoud lokale orders zonder WooCommerce-koppeling als WooCommerce tijdelijk niet bereikbaar is. Dit zijn vaak orders
   // waarvan de achtergrond-sync nog loopt of tijdelijk is mislukt.
-  const linked=db.prepare("SELECT id,user_id,wc_order_id,recurring_order_id FROM orders WHERE wc_order_id IS NOT NULL AND wc_order_id != '' ORDER BY id").all();
+  const linked=db.prepare("SELECT id,user_id,wc_order_id,recurring_order_id FROM orders WHERE wc_order_id IS NOT NULL AND wc_order_id != '' ORDER BY id DESC LIMIT 10").all();
   for(const row of linked){
    stats.checked++;
    try{
@@ -1499,7 +1499,7 @@ async function processRecurringOrders(){
 setTimeout(()=>processRecurringOrders().catch(err=>console.error("Recurring scheduler:",err.message)),5000);
 setInterval(()=>processRecurringOrders().catch(err=>console.error("Recurring scheduler:",err.message)),60000).unref();
 setTimeout(()=>syncDeletedWooOrders(),15000).unref();
-setInterval(()=>syncDeletedWooOrders(),300000).unref();
+setInterval(()=>syncDeletedWooOrders(),900000).unref();
 setTimeout(()=>syncWooCustomerBilling(),20000).unref();
-setInterval(()=>syncWooCustomerBilling(),300000).unref();
+setInterval(()=>syncWooCustomerBilling(),900000).unref();
 app.listen(PORT, "0.0.0.0", ()=>console.log(`Bendemen Supply Panel draait op poort ${PORT}`));
