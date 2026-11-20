@@ -13,19 +13,22 @@ function config(){
 }
 async function request(endpoint,method="GET",data){
  const c=config();
+ const requestId=crypto.randomUUID();
+ const startedAt=Date.now();
  const timeout=Math.max(5000,Math.min(120000,Number(process.env.WC_API_TIMEOUT_MS)||20000));
  try{
   const response=await axios({
    url:`${c.base}/wp-json/bendemen-supply/v1/${String(endpoint).replace(/^\//,"")}`,
-   method,data,headers:{"X-Bendemen-Supply-Key":c.secret,"Content-Type":"application/json"},
+   method,data,headers:{"X-Bendemen-Supply-Key":c.secret,"Content-Type":"application/json","X-Request-ID":requestId},
    timeout,httpAgent,httpsAgent,maxRedirects:3
   });
+  console.info("Supply Bridge request completed:",{requestId,method,endpoint,status:response.status,elapsedMs:Date.now()-startedAt,bridgeDurationMs:response.headers["x-bendemen-supply-duration"]||null});
   return response.data;
  }catch(err){
   const responseData=err.response?.data;
   console.error("Supply Bridge request failed:",{
-   method,endpoint,code:err.code||null,status:err.response?.status||null,
-   message:err.message,bridgeCode:responseData?.code||null,
+   requestId,method,endpoint,code:err.code||null,status:err.response?.status||null,
+   elapsedMs:Date.now()-startedAt,message:err.message,bridgeDurationMs:err.response?.headers?.["x-bendemen-supply-duration"]||null,bridgeCode:responseData?.code||null,
    bridgeMessage:responseData?.message||null,timeoutMs:timeout,baseUrl:c.base
   });
   throw new Error(responseData?.message||err.message||"Supply Bridge request failed");
