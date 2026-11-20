@@ -110,6 +110,26 @@ function escapeHtml(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// Centrale verzendlaag: iedere e-mail krijgt dezelfde huisstijl en inline header/footer.
+function sendBrandedMail(options) {
+  const html = String(options.html || "");
+  const brandedHtml = /<img[^>]+cid:bendemen-mail-(?:header|footer)/i.test(html)
+    ? html
+    : emailLayout(html);
+  const existingAttachments = Array.isArray(options.attachments) ? options.attachments : [];
+  const imageCids = new Set(existingAttachments.map(item => item && item.cid).filter(Boolean));
+  const brandImages = imageAttachments().filter(item => !imageCids.has(item.cid));
+  const text = String(options.text || "").trim();
+  const brandedText = text + (text ? "\\n\\n" : "") +
+    "Met vriendelijke groet,\\nTeam Bendemen\\nBendemen Studios\\ninfo@bendemen.nl";
+  return transporter().sendMail({
+    ...options,
+    text: brandedText,
+    html: brandedHtml,
+    attachments: [...existingAttachments, ...brandImages]
+  });
+}
+
 function sender(displayName) {
   return { name: displayName, address: FROM_ADDRESS };
 }
@@ -166,7 +186,7 @@ async function sendAutomatedOrderEmail({ to, order, isTest = false }) {
     '<p>Heeft u vragen over deze factuur of de betaling? Neem dan gerust contact met ons op via <a href="mailto:info@bendemen.nl" style="color:#20242a;text-decoration:underline;">info@bendemen.nl</a>.</p>' +
     '<p>Met vriendelijke groet,<br><strong>Team Bendemen</strong></p>'
   );
-  return transporter().sendMail({
+  return sendBrandedMail({
     from: sender("Factuur klaar om te betalen | Bendemen"),
     ...mailHeaders(),
     to,
@@ -189,7 +209,7 @@ async function sendScheduledOrderReminder({ to, order, daysBefore, orderDate, is
     ? "Herinnering: je bestelling staat over 7 dagen gepland"
     : "Laatste herinnering: je bestelling staat over 3 dagen gepland";
   const text = `Je geplande bestelling staat gepland op ${date}. Bekijk de bestelling in het Bendemen Supply Panel: ${url}`;
-  return transporter().sendMail({
+  return sendBrandedMail({
     from: sender(`${daysBefore} dagen nog om te betalen | Bendemen Supply Panel`),
     ...mailHeaders(),
     to,
@@ -206,7 +226,7 @@ async function sendScheduledOrderReminder({ to, order, daysBefore, orderDate, is
 async function sendSecurityCodeEmail({ to, code, purpose = "login" }) {
   const setup = purpose === "setup";
   const intro = setup ? "Gebruik deze code om e-mailverificatie voor je Supply Panel-account in te schakelen." : "Gebruik deze code om in te loggen op je Supply Panel-account.";
-  return transporter().sendMail({
+  return sendBrandedMail({
     from: sender("Beveiliging | Bendemen Supply Panel"), ...mailHeaders(), to,
     envelope: { from: FROM_ADDRESS, to: [to] },
     headers: { "X-Mailer": "Bendemen Supply Panel" },
