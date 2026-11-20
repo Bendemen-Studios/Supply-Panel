@@ -208,7 +208,7 @@ final class Bendemen_Supply_Bridge {
                 'id' => $item->get_id(), 'name' => $item->get_name(),
                 'product_id' => $item->get_product_id(), 'variation_id' => $item->get_variation_id(),
                 'quantity' => $item->get_quantity(), 'subtotal' => $item->get_subtotal(),
-                'total' => $item->get_total(), 'meta_data' => [],
+                'total' => $item->get_total(), 'meta_data' => array_map(function ($meta) { $data = $meta->get_data(); return ['key' => $data['key'], 'value' => $data['value']]; }, $item->get_meta_data()),
             ];
         }
         $fees = [];
