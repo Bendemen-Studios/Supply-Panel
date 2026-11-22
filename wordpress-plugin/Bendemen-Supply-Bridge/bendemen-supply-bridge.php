@@ -75,7 +75,7 @@ final class Bendemen_Supply_Bridge {
         <?php
     }
 
-    private static function authorized($request) {
+    public static function authorized($request) {
         if (!class_exists('WooCommerce')) return new WP_Error('bendemen_wc_missing', 'WooCommerce is niet actief.', ['status' => 503]);
         $expected = (string) get_option(self::OPTION, '');
         $provided = (string) $request->get_header('x-bendemen-supply-key');
