@@ -192,7 +192,7 @@ final class Bendemen_Supply_Bridge {
         $excluded = ['_edit_lock', '_edit_last'];
         $result = [];
         foreach (get_post_meta($post_id) as $key => $values) {
-            if (str_starts_with($key, '_') || in_array($key, $excluded, true) || stripos($key, 'rank_math') === 0) continue;
+            if (strpos($key, '_') === 0 || in_array($key, $excluded, true) || stripos($key, 'rank_math') === 0) continue;
             $value = maybe_unserialize($values[0] ?? '');
             $result[] = ['key' => $key, 'value' => $value];
         }
