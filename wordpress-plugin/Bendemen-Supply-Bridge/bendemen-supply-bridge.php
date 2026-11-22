@@ -170,7 +170,7 @@ final class Bendemen_Supply_Bridge {
         return array_map([__CLASS__, 'format_product'], $products);
     }
 
-    private static function format_product($product) {
+    public static function format_product($product) {
         return [
             'id' => $product->get_id(),
             'name' => $product->get_name(),
@@ -218,7 +218,7 @@ final class Bendemen_Supply_Bridge {
         return self::format_customer($user);
     }
 
-    private static function format_customer($user) {
+    public static function format_customer($user) {
         $billing_keys = ['first_name','last_name','company','address_1','address_2','city','state','postcode','country','email','phone'];
         $billing = [];
         foreach ($billing_keys as $key) $billing[$key] = (string) get_user_meta($user->ID, 'billing_' . $key, true);
