@@ -9,6 +9,8 @@
 
 if (!defined('ABSPATH')) exit;
 
+// Voorkom een fatale redeclare-fout wanneer de plugin per ongeluk dubbel aanwezig is.
+if (!class_exists('Bendemen_Supply_Bridge', false)) {
 final class Bendemen_Supply_Bridge {
     const VERSION = '1.0.0';
     const OPTION = 'bendemen_supply_bridge_secret';
@@ -302,7 +304,7 @@ final class Bendemen_Supply_Bridge {
         foreach ((array) $payload as $line) {
             $line_id = absint($line['id'] ?? 0);
             $item = $line_id && isset($existing[$line_id]) ? $existing[$line_id] : null;
-            if (!empty($line['delete']) || ($type === 'line_item' && isset($line['quantity']) && (float) $line['quantity'] <= 0)) {
+            if (!empty($line['delete']) || ($type === 'product' && isset($line['quantity']) && (float) $line['quantity'] <= 0)) {
                 if ($item) $order->remove_item($line_id);
                 continue;
             }
@@ -351,3 +353,4 @@ final class Bendemen_Supply_Bridge {
 }
 
 Bendemen_Supply_Bridge::boot();
+}
