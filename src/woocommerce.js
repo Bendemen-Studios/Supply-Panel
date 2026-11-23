@@ -8,7 +8,7 @@ const httpsAgent=new https.Agent({keepAlive:true,maxSockets:5,maxFreeSockets:2,t
 function isWooProductId(value){return /^\d+$/.test(String(value||""));}
 function config(){
  const base=(process.env.WC_STORE_URL||"").replace(/\/$/,"");
- const secret=process.env.WC_BRIDGE_SECRET||"";
+ const secret=String(process.env.WC_BRIDGE_SECRET||"").trim();
  if(!base||secret.length<40)throw new Error("Supply Bridge-configuratie ontbreekt. Stel WC_STORE_URL en WC_BRIDGE_SECRET in.");
  return{base,secret};
 }
