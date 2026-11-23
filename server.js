@@ -528,21 +528,30 @@ async function sendEmail2FACode(user,purpose){
  db.prepare("UPDATE users SET email_2fa_code_hash=?,email_2fa_expires_at=? WHERE id=?").run(c.hash,c.expires,user.id);
  await sendSecurityCodeEmail({to:user.email,code:c.code,purpose});
 }
-app.post("/login",loginLimiter,async(req,res)=>{
+app.post("/login",loginLimiter,async(req,res,next)=>{
  const email=String(req.body.email||"").trim().toLowerCase(),password=String(req.body.password||"");
- const user=db.prepare("SELECT * FROM users WHERE email=? COLLATE NOCASE").get(email);
- if(!user||user.active!==1||!["admin","customer"].includes(user.role)||(user.role==="customer"&&!user.wc_customer_id)||!(await bcrypt.compare(password,user.password_hash)))return res.redirect("/login?error=1");
- req.session.regenerate(async err=>{
-  if(err)return res.status(500).send("Sessie kon niet worden gestart.");
+ try{
+  const user=db.prepare("SELECT * FROM users WHERE email=? COLLATE NOCASE").get(email);
+  if(!user||Number(user.active)!==1||!["admin","customer"].includes(user.role)||(user.role==="customer"&&!user.wc_customer_id)||!(await bcrypt.compare(password,user.password_hash)))return res.redirect(303,"/login?error=1");
+
+  // Regenerate the session to prevent fixation, then explicitly persist it before redirecting.
+  await new Promise((resolve,reject)=>req.session.regenerate(error=>error?reject(error):resolve()));
+
   if(Number(user.email_2fa_enabled)===1){
    req.session.pendingEmail2FA={userId:user.id,expiresAt:Date.now()+600000,attempts:0};
-   try{await sendEmail2FACode(user,"login");res.redirect("/login/2fa");}
-   catch(error){console.error("Email 2FA login-code failed:",error.message);req.session.destroy(()=>res.redirect("/login?mail_error=1"));}
-   return;
+   await sendEmail2FACode(user,"login");
+   await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));
+   return res.redirect(303,"/login/2fa");
   }
+
   authenticatedUser(req,user);
-  res.redirect(Number(user.email_2fa_prompt_snoozed_until||0)>Date.now()?(user.role==="admin"?"/admin":"/"):"/account/security/2fa?offer=1");
- });
+  await new Promise((resolve,reject)=>req.session.save(error=>error?reject(error):resolve()));
+  return res.redirect(303,Number(user.email_2fa_prompt_snoozed_until||0)>Date.now()?(user.role==="admin"?"/admin":"/"):"/account/security/2fa?offer=1");
+ }catch(error){
+  console.error("Login/session initialization failed:",error.message);
+  if(req.session) return req.session.destroy(()=>res.redirect(303,"/login?mail_error=1"));
+  return next(error);
+ }
 });
 app.get("/login/2fa",(req,res)=>{
  if(!req.session.pendingEmail2FA)return res.redirect("/login");
