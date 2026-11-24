@@ -404,3 +404,19 @@ p{line-height:1.7}
   .order-row{gap:9px;padding:15px 0}
   .primary,.secondary,.danger{padding:11px 14px}
 }
+
+
+/* Force the Supply Panel dark palette regardless of the OS/browser light preference. */
+:root,
+html {
+  color-scheme: only dark;
+  background-color: #111211;
+  color: #f4f5f0;
+}
+html, body {
+  background-color: #111211 !important;
+  color: #f4f5f0;
+}
+input, select, textarea, button {
+  color-scheme: only dark;
+}
